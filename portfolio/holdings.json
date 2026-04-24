@@ -1,0 +1,20 @@
+[
+  {
+    "ticker": "NVDA",
+    "shares": 7.0,
+    "cost_basis": 176.952,
+    "notes": ""
+  },
+  {
+    "ticker": "QQQ",
+    "shares": 2.0,
+    "cost_basis": 576.03,
+    "notes": ""
+  },
+  {
+    "ticker": "PLTR",
+    "shares": 2.0,
+    "cost_basis": 151.15,
+    "notes": ""
+  }
+]
