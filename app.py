@@ -22,7 +22,15 @@ from config import (
     TICKER_METADATA,
     TICKER_SUGGESTION_UNIVERSE,
 )
-from data.fetcher import batch_history, get_latest_quote, get_market_session_quote, get_news_items
+from data.fetcher import (
+    batch_history,
+    collect_fetch_notices,
+    collect_fetch_warnings,
+    get_latest_quote,
+    get_market_session_quote,
+    get_news_items,
+    reset_fetch_warnings,
+)
 from data.indicators import build_factor_snapshot
 from data.macro import get_macro_snapshot
 from data.options import get_near_term_options_summary
@@ -30,7 +38,7 @@ from data.radar import scan_breakout_candidates
 from data.sentiment import build_news_features
 from models.kelly import continuous_kelly
 from models.regime import classify_market_regime, detect_breakdown_signal, detect_sigma_event
-from models.signals import build_candidate_trade_profile, build_trade_profile, should_force_observe
+from models.signals import calculate_rolling_alpha, build_candidate_trade_profile, build_trade_profile, should_force_observe
 from portfolio.holdings import enrich_holdings_with_quotes, frame_to_holdings, load_holdings, save_holdings
 from reports.generator import build_execution_payload, build_markdown_report, save_report_bundle
 
@@ -240,6 +248,10 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
         "Google News RSS": "Google 新闻 RSS",
         "Yahoo Finance": "Yahoo Finance 聚合",
         "yfinance.info": "yfinance 实时快照",
+        "yfinance.history": "yfinance 历史行情",
+        "eastmoney.realtime": "东方财富实时行情",
+        "eastmoney.history": "东方财富历史行情",
+        "unavailable": "数据不可用",
     }
 
     if "Signal" in frame.columns:
@@ -350,6 +362,14 @@ def _history_to_quote(history: pd.DataFrame, ticker: str) -> dict[str, Any]:
         "change_pct": change_pct,
         "as_of": str(history.index[-1].date()) if isinstance(history.index, pd.DatetimeIndex) else None,
     }
+
+
+def _rolling_alpha_from_history(history: pd.DataFrame, benchmark_history: pd.DataFrame) -> float:
+    if history.empty or benchmark_history.empty:
+        return 0.0
+    if "close" not in history or "close" not in benchmark_history:
+        return 0.0
+    return calculate_rolling_alpha(history["close"].pct_change(), benchmark_history["close"].pct_change())
 
 
 def _build_core_math_inference(
@@ -529,6 +549,7 @@ def _build_quant_logic_log(
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def run_analysis_pipeline(holding_tickers: tuple[str, ...], kelly_fraction: float) -> dict[str, Any]:
+    reset_fetch_warnings()
     tracked_tickers = sorted(set(CORE_SIGNAL_TICKERS + REGIME_SUPPORT_TICKERS + list(holding_tickers) + [AAOX_UNDERLYING]))
     histories = batch_history(tracked_tickers, period="6mo", interval="1d")
     qqq_history = histories.get("QQQ", pd.DataFrame())
@@ -555,11 +576,13 @@ def run_analysis_pipeline(holding_tickers: tuple[str, ...], kelly_fraction: floa
 
     core_signal_profiles: dict[str, dict[str, Any]] = {}
     for ticker in CORE_SIGNAL_TICKERS:
+        history = histories.get(ticker, pd.DataFrame())
         core_signal_profiles[ticker] = build_trade_profile(
             ticker,
             factor_map.get(ticker, {}),
             news_map.get(ticker, {}),
             regime["score"],
+            rolling_alpha=_rolling_alpha_from_history(history, qqq_history),
         )
 
     decision_tickers = sorted({ticker for ticker in holding_tickers if ticker and ticker != "AAOX"})
@@ -567,11 +590,13 @@ def run_analysis_pipeline(holding_tickers: tuple[str, ...], kelly_fraction: floa
         decision_tickers.append("AAOI")
     holding_profiles: dict[str, dict[str, Any]] = {}
     for ticker in sorted(set(decision_tickers)):
+        history = histories.get(ticker, pd.DataFrame())
         holding_profiles[ticker] = build_trade_profile(
             ticker,
             factor_map.get(ticker, {}),
             news_map.get(ticker, {}),
             regime["score"],
+            rolling_alpha=_rolling_alpha_from_history(history, qqq_history),
         )
 
     options_summary = get_near_term_options_summary(OPTIONS_TICKER)
@@ -652,7 +677,9 @@ def run_analysis_pipeline(holding_tickers: tuple[str, ...], kelly_fraction: floa
         "radar_candidates": radar_candidates,
         "observe_mode": observe_mode,
         "observe_reason": observe_reason,
+        "data_notices": collect_fetch_notices(),
         "quote_map": quote_map,
+        "data_warnings": collect_fetch_warnings(),
     }
 
 
@@ -751,6 +778,20 @@ if run_clicked:
         quant_logic_log=quant_logic_log,
     )
     markdown = build_markdown_report(payload)
+    data_notices = analysis.get("data_notices", [])
+    data_warnings = analysis.get("data_warnings", [])
+
+    if data_notices:
+        st.info("部分海外数据源不可达时，系统已自动切换到中国大陆/香港可达的数据源。海外源恢复后仍会优先使用海外源。")
+        with st.expander("查看自动切源记录", expanded=False):
+            for notice in data_notices:
+                st.write(f"- {notice}")
+
+    if data_warnings:
+        st.warning("仍有部分数据在海外源和大陆/香港回退源上都未成功取回，当前已按空结果降级显示。")
+        with st.expander("查看抓取告警", expanded=False):
+            for warning in data_warnings:
+                st.write(f"- {warning}")
 
     top_left, top_mid, top_right = st.columns(3)
     top_left.metric("市场状态", regime["label"])

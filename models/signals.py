@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 
 GLOBAL_OBSERVE_REGIME_THRESHOLD = 0.34
@@ -40,11 +41,56 @@ def volatility_penalty_label(hist_vol_20d: float | None) -> str:
     return "Low"
 
 
+def _fallback_alpha(sample: pd.DataFrame) -> float:
+    if sample.empty:
+        return 0.0
+    excess_return = sample["asset"] - sample["benchmark"]
+    if excess_return.empty:
+        return 0.0
+    return float(excess_return.mean())
+
+
+def calculate_rolling_alpha(
+    ticker_returns: pd.Series,
+    benchmark_returns: pd.Series,
+    window: int = 60,
+) -> float:
+    # OLS alpha uses the latest clean window; if observations are insufficient, fall back to mean excess return.
+    aligned = pd.concat(
+        [ticker_returns.rename("asset"), benchmark_returns.rename("benchmark")],
+        axis=1,
+        join="inner",
+    ).dropna()
+    if aligned.empty:
+        return 0.0
+
+    sample = aligned.tail(window)
+    if len(sample) < window:
+        return _fallback_alpha(sample)
+
+    benchmark = sample["benchmark"].to_numpy(dtype=float)
+    asset = sample["asset"].to_numpy(dtype=float)
+    if np.allclose(np.var(benchmark), 0.0):
+        return _fallback_alpha(sample)
+
+    design_matrix = np.column_stack([np.ones(len(sample)), benchmark])
+    try:
+        coefficients, *_ = np.linalg.lstsq(design_matrix, asset, rcond=None)
+    except np.linalg.LinAlgError:
+        return _fallback_alpha(sample)
+
+    alpha = float(coefficients[0])
+    if not np.isfinite(alpha):
+        return _fallback_alpha(sample)
+    return alpha
+
+
 def estimate_expected_return(
     ticker: str,
     market_features: dict[str, Any],
     news_features: dict[str, Any],
     regime_score: float,
+    rolling_alpha: float | None = None,
 ) -> dict[str, Any]:
     log_return_5d = float(market_features.get("log_return_5d") or 0.0)
     hist_vol_20d = float(market_features.get("hist_vol_20d") or 0.0)
@@ -78,14 +124,12 @@ def estimate_expected_return(
     headline_density = _clip_feature(float(news_features.get("headline_count") or 0.0), 8.0, lower=0.0, upper=1.0)
     news_component = 0.6 * sentiment_component + 0.25 * shock_component + 0.15 * headline_density
 
-    intercept = {
-        "QQQ": 0.01,
-        "NVDA": 0.014,
-        "AAOI": 0.012,
-    }.get(ticker, 0.01)
+    # The regression alpha is estimated on daily returns, so rescale it to the 5-day forecast horizon.
+    resolved_alpha = float(rolling_alpha) if rolling_alpha is not None and np.isfinite(rolling_alpha) else 0.0
+    alpha_component_5d = resolved_alpha * 5.0
     regime_bias = (regime_score - 0.5) * 0.03
     synergy = 0.01 if breakout and sentiment_component > 0 else 0.0
-    expected_return_5d = intercept + 0.04 * market_component + 0.025 * news_component + regime_bias + synergy
+    expected_return_5d = alpha_component_5d + 0.04 * market_component + 0.025 * news_component + regime_bias + synergy
     expected_return_5d = float(np.clip(expected_return_5d, -0.12, 0.15))
 
     if market_component >= news_component:
@@ -97,6 +141,8 @@ def estimate_expected_return(
     return {
         "expected_return_5d": expected_return_5d,
         "expected_return_daily": expected_return_5d / 5.0,
+        "rolling_alpha_daily": resolved_alpha,
+        "alpha_component_5d": alpha_component_5d,
         "market_component": market_component,
         "news_component": news_component,
         "volatility_penalty": volatility_penalty_label(hist_vol_20d),
@@ -197,8 +243,21 @@ def build_trade_profile(
     market_features: dict[str, Any],
     news_features: dict[str, Any],
     regime_score: float,
+    rolling_alpha: float | None = None,
 ) -> dict[str, Any]:
-    expected = estimate_expected_return(ticker, market_features, news_features, regime_score)
+    resolved_alpha = rolling_alpha
+    if resolved_alpha is None:
+        cached_alpha = market_features.get("rolling_alpha")
+        if isinstance(cached_alpha, (int, float)) and np.isfinite(cached_alpha):
+            resolved_alpha = float(cached_alpha)
+
+    expected = estimate_expected_return(
+        ticker,
+        market_features,
+        news_features,
+        regime_score,
+        rolling_alpha=resolved_alpha,
+    )
     signal_mode = classify_signal_mode(market_features)
 
     volume_ratio = float(market_features.get("volume_ratio_20d") or 1.0)

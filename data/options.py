@@ -5,6 +5,8 @@ from typing import Any
 import pandas as pd
 import yfinance as yf
 
+from data.fetcher import register_fetch_warning
+
 
 def _top_strikes(frame: pd.DataFrame, top_n: int) -> list[dict[str, Any]]:
     if frame.empty:
@@ -27,7 +29,11 @@ def get_near_term_options_summary(
     top_n: int = 5,
 ) -> dict[str, Any]:
     ticker_obj = yf.Ticker(ticker)
-    expiries = list(ticker_obj.options[:max_expiries])
+    try:
+        expiries = list(ticker_obj.options[:max_expiries])
+    except Exception as exc:
+        register_fetch_warning("期权链", ticker, exc)
+        expiries = []
     if not expiries:
         return {
             "ticker": ticker,
@@ -42,7 +48,8 @@ def get_near_term_options_summary(
     for expiry in expiries:
         try:
             chain = ticker_obj.option_chain(expiry)
-        except Exception:
+        except Exception as exc:
+            register_fetch_warning("期权链详情", f"{ticker} {expiry}", exc)
             continue
         if not chain.calls.empty:
             call_frame = chain.calls.copy()
