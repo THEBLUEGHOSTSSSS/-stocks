@@ -14,8 +14,12 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any] | None:
     if not ticker:
         return None
 
+    side = str(row.get("side", "LONG") or "LONG").strip().upper()
+    if side not in {"LONG", "SHORT"}:
+        side = "LONG"
+
     try:
-        shares = float(row.get("shares", 0.0) or 0.0)
+        shares = abs(float(row.get("shares", 0.0) or 0.0))
     except (TypeError, ValueError):
         shares = 0.0
 
@@ -26,6 +30,7 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any] | None:
 
     return {
         "ticker": ticker,
+        "side": side,
         "shares": shares,
         "cost_basis": cost_basis,
         "notes": str(row.get("notes", "") or ""),
@@ -62,7 +67,7 @@ def save_holdings(rows: list[dict[str, Any]], path: Path = HOLDINGS_FILE) -> lis
 
 def holdings_to_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
     if not rows:
-        return pd.DataFrame(columns=["ticker", "shares", "cost_basis", "notes"])
+        return pd.DataFrame(columns=["ticker", "side", "shares", "cost_basis", "notes"])
     return pd.DataFrame(rows)
 
 
@@ -81,15 +86,19 @@ def enrich_holdings_with_quotes(
         market_price = quote.get("close")
         shares = float(holding["shares"])
         cost_basis = float(holding["cost_basis"])
+        side = str(holding.get("side") or "LONG").upper()
+        direction = 1.0 if side == "LONG" else -1.0
         market_value = market_price * shares if market_price is not None else None
         cost_value = cost_basis * shares
-        pnl = (market_price - cost_basis) * shares if market_price is not None else None
-        pnl_pct = ((market_price / cost_basis) - 1.0) * 100.0 if market_price is not None and cost_basis else None
+        pnl = (market_price - cost_basis) * shares * direction if market_price is not None else None
+        pnl_pct = (((market_price - cost_basis) / cost_basis) * 100.0 * direction) if market_price is not None and cost_basis else None
+        net_exposure = market_value * direction if market_value is not None else None
         enriched.append(
             {
                 **holding,
                 "market_price": market_price,
                 "market_value": market_value,
+                "net_exposure": net_exposure,
                 "cost_value": cost_value,
                 "pnl": pnl,
                 "pnl_pct": pnl_pct,

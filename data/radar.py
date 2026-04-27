@@ -77,8 +77,18 @@ def scan_breakout_candidates(
             and (volume_ratio < 1.5 or close_position < 0.6)
         )
         breakdown = bool(float(latest["close"]) < previous_low_20d and volume_ratio >= 1.5)
-        expected_return_5d = _expected_return_model(snapshot, close_position)
-        signal_strength = expected_return_5d * max(volume_ratio, 0.1)
+        long_expected_return_5d = _expected_return_model(snapshot, close_position)
+        short_expected_return_5d = -abs(_expected_return_model(snapshot, 1.0 - close_position))
+        if breakdown and not valid_breakout:
+            expected_return_5d = short_expected_return_5d
+            trade_direction = "SHORT"
+        elif valid_breakout:
+            expected_return_5d = long_expected_return_5d
+            trade_direction = "LONG"
+        else:
+            expected_return_5d = long_expected_return_5d
+            trade_direction = "FLAT"
+        signal_strength = abs(expected_return_5d) * max(volume_ratio, 0.1)
 
         candidates.append(
             {
@@ -92,6 +102,7 @@ def scan_breakout_candidates(
                 "breakout_valid": valid_breakout,
                 "fake_breakout": fake_breakout,
                 "breakdown": breakdown,
+                "trade_direction": trade_direction,
                 "expected_return_5d": expected_return_5d,
                 "expected_return_10d": round(expected_return_5d * 1.6, 4),
                 "signal_strength": signal_strength,
@@ -100,7 +111,7 @@ def scan_breakout_candidates(
 
     ranked = sorted(
         candidates,
-        key=lambda item: (item["breakout_valid"], item["signal_strength"]),
+        key=lambda item: (item["breakout_valid"] or item["breakdown"], abs(item["signal_strength"])),
         reverse=True,
     )
     return ranked[:max_candidates]

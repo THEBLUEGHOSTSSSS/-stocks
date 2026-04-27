@@ -15,6 +15,13 @@ STRATEGY_THRESHOLDS = {
         "min_win_rate": 0.57,
         "min_payoff_ratio": 1.05,
     },
+    "short_breakdown": {
+        "min_regime_score": 0.4,
+        "min_expected_return_5d": 0.018,
+        "min_ev": 0.005,
+        "min_win_rate": 0.56,
+        "min_payoff_ratio": 1.0,
+    },
     "mean_reversion": {
         "min_regime_score": 0.42,
         "min_expected_return_5d": 0.015,
@@ -169,6 +176,21 @@ def classify_signal_mode(market_features: dict[str, Any]) -> dict[str, str]:
 
     if (
         not breakout
+        and daily_return_pct <= -2.0
+        and log_return_5d <= -0.02
+        and volume_ratio >= 1.2
+        and relative_strength <= 0.0
+        and close <= sma_20
+        and rsi_14 <= 48.0
+    ):
+        return {
+            "signal_mode": "short_breakdown",
+            "signal_label": "破位沽空",
+            "signal_reason": "跌破支撑、放量、弱于基准",
+        }
+
+    if (
+        not breakout
         and rsi_14 <= 35.0
         and log_return_5d <= -0.015
         and daily_return_pct <= -1.5
@@ -212,7 +234,8 @@ def evaluate_trade_gate(
             "eligible": False,
             "reason": "市场状态不支持新增风险暴露",
         }
-    if expected_return_5d < thresholds["min_expected_return_5d"]:
+    edge_return_5d = abs(expected_return_5d) if signal_mode == "short_breakdown" else expected_return_5d
+    if edge_return_5d < thresholds["min_expected_return_5d"]:
         return {
             "eligible": False,
             "reason": "5日EV未达到入场阈值",
@@ -263,7 +286,8 @@ def build_trade_profile(
     volume_ratio = float(market_features.get("volume_ratio_20d") or 1.0)
     relative_strength = float(market_features.get("relative_strength_20d_vs_benchmark") or 0.0)
     breakout = bool(market_features.get("breakout_20d"))
-    breakout_valid = bool(signal_mode["signal_mode"] == "momentum" and breakout and volume_ratio >= 1.2 and relative_strength >= 0.0)
+    breakdown_valid = bool(signal_mode["signal_mode"] == "short_breakdown")
+    breakout_valid = bool(signal_mode["signal_mode"] in {"momentum", "short_breakdown"} and ((breakout and volume_ratio >= 1.2 and relative_strength >= 0.0) or breakdown_valid))
     fake_breakout = bool(breakout and not breakout_valid)
     trade_stats = estimate_trade_stats(
         expected["expected_return_5d"],
@@ -286,6 +310,8 @@ def build_trade_profile(
         **expected,
         **signal_mode,
         **trade_stats,
+        "trade_direction": "SHORT" if breakdown_valid else ("LONG" if signal_mode["signal_mode"] == "momentum" else "FLAT"),
+        "breakdown": breakdown_valid,
         "breakout_valid": breakout_valid,
         "fake_breakout": fake_breakout,
         "eligible_for_risk": gate["eligible"],
@@ -295,15 +321,30 @@ def build_trade_profile(
 
 
 def build_candidate_trade_profile(candidate: dict[str, Any], regime_score: float) -> dict[str, Any]:
-    signal_mode = {
-        "signal_mode": "momentum" if candidate.get("breakout_valid") else "neutral",
-        "signal_label": "动能延续" if candidate.get("breakout_valid") else "观望",
-        "signal_reason": "放量突破模板" if candidate.get("breakout_valid") else "未触发突破阈值",
-    }
+    if candidate.get("breakdown"):
+        signal_mode = {
+            "signal_mode": "short_breakdown",
+            "signal_label": "破位沽空",
+            "signal_reason": "放量跌破模板",
+        }
+    elif candidate.get("breakout_valid"):
+        signal_mode = {
+            "signal_mode": "momentum",
+            "signal_label": "动能延续",
+            "signal_reason": "放量突破模板",
+        }
+    else:
+        signal_mode = {
+            "signal_mode": "neutral",
+            "signal_label": "观望",
+            "signal_reason": "未触发突破阈值",
+        }
+
+    confirmed_setup = bool(candidate.get("breakout_valid") or candidate.get("breakdown"))
     trade_stats = estimate_trade_stats(
         float(candidate.get("expected_return_5d") or 0.0),
         float(candidate.get("volume_ratio_20d") or 0.0),
-        bool(candidate.get("breakout_valid")),
+        confirmed_setup,
         bool(candidate.get("fake_breakout")),
     )
     gate = evaluate_trade_gate(
@@ -316,6 +357,7 @@ def build_candidate_trade_profile(candidate: dict[str, Any], regime_score: float
         **candidate,
         **signal_mode,
         **trade_stats,
+        "trade_direction": "SHORT" if candidate.get("breakdown") else ("LONG" if candidate.get("breakout_valid") else "FLAT"),
         "eligible_for_risk": gate["eligible"],
         "gate_reason": gate["reason"],
     }
@@ -343,17 +385,18 @@ def estimate_trade_stats(
     breakout_valid: bool,
     fake_breakout: bool,
 ) -> dict[str, float]:
+    edge_return_5d = abs(expected_return_5d)
     win_rate = 0.42
     if breakout_valid:
         win_rate += 0.12
     if fake_breakout:
         win_rate -= 0.15
     win_rate += 0.08 * float(np.clip((volume_ratio - 1.0) / 2.0, 0.0, 1.0))
-    win_rate += 0.12 * float(np.clip(expected_return_5d / 0.08, -1.0, 1.0))
+    win_rate += 0.12 * float(np.clip(edge_return_5d / 0.08, 0.0, 1.0))
     win_rate = float(np.clip(win_rate, 0.2, 0.8))
 
-    stop_loss_pct = float(np.clip(0.03 + abs(expected_return_5d) * 0.6, 0.03, 0.08))
-    reward_pct = float(max(expected_return_5d, 0.01))
+    stop_loss_pct = float(np.clip(0.03 + edge_return_5d * 0.6, 0.03, 0.08))
+    reward_pct = float(max(edge_return_5d, 0.01))
     payoff_ratio = reward_pct / stop_loss_pct if stop_loss_pct else 0.0
     ev = win_rate * reward_pct - (1.0 - win_rate) * stop_loss_pct
     return {

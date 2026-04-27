@@ -12,6 +12,7 @@ def build_execution_payload(
     analysis_date: str,
     regime: dict[str, Any],
     macro_snapshot: dict[str, Any],
+    account_overview: dict[str, Any],
     mathematical_inference: dict[str, Any],
     legacy_orders: list[dict[str, Any]],
     new_alpha_targets: list[dict[str, Any]],
@@ -23,6 +24,7 @@ def build_execution_payload(
         "Market_Regime_Score": round(float(regime.get("score", 0.0)), 4),
         "Market_Regime_Label": regime.get("label"),
         "Macro_Snapshot": macro_snapshot,
+        "Portfolio_Budget": account_overview,
         "Execution_Orders": {
             "Legacy_Positions": legacy_orders,
             "New_Alpha_Targets": new_alpha_targets,
@@ -35,6 +37,7 @@ def build_execution_payload(
 
 def build_markdown_report(payload: dict[str, Any]) -> str:
     lines: list[str] = []
+    borrow_summary = (payload.get("Portfolio_Budget") or {}).get("borrow_metrics_summary") or {}
     lines.append(f"# 美股量化执行报告 {payload['Date']}")
     lines.append("")
     lines.append("## 市场环境")
@@ -46,6 +49,26 @@ def build_markdown_report(payload: dict[str, Any]) -> str:
     for key, value in payload.get("Macro_Snapshot", {}).items():
         lines.append(f"- {key}: {json.dumps(value, ensure_ascii=False)}")
     lines.append("")
+    lines.append("## 账户资金")
+    for key, value in payload.get("Portfolio_Budget", {}).items():
+        lines.append(f"- {key}: {value}")
+    lines.append("")
+    if borrow_summary:
+        lines.append("## 借券情况")
+        lines.append(f"- 平均借券费率: {float(borrow_summary.get('avg_borrow_fee_pct') or 0.0):.2f}%/年")
+        lines.append(f"- 难借个股数: {int(borrow_summary.get('htb_count') or 0)}")
+        lines.append(f"- 禁空个股数: {int(borrow_summary.get('prohibit_count') or 0)}")
+        for ticker, summary in (borrow_summary.get("tickers") or {}).items():
+            lines.append(
+                "- "
+                f"{ticker}: 借券费率 {float(summary.get('fee_pct') or 0.0):.2f}%/年, "
+                f"可借股数 {int(summary.get('available_shares') or 0)}, "
+                f"HTB={bool(summary.get('is_hard_to_borrow'))}, "
+                f"禁空={bool(summary.get('prohibit_short'))}, "
+                f"初始保证金 {float(summary.get('initial_margin_pct') or 0.0):.2f}%, "
+                f"维持担保 {float(summary.get('maintenance_margin_pct') or 0.0):.2f}%"
+            )
+        lines.append("")
     lines.append("## 核心推演")
     for ticker, inference in payload.get("Mathematical_Inference", {}).items():
         lines.append(f"### {ticker}")

@@ -3,11 +3,22 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 SNAPSHOTS_DIR = BASE_DIR / "snapshots"
 HOLDINGS_FILE = BASE_DIR / "portfolio" / "holdings.json"
+ACCOUNT_FILE = BASE_DIR / "portfolio" / "account.json"
 
 CACHE_TTL_SECONDS = 300
 TRADING_DAYS_PER_YEAR = 252
 RISK_FREE_RATE = 0.04
 DEFAULT_KELLY_FRACTION = 0.5
+DEFAULT_SHORT_MARGIN_RATIO = 0.5
+SHORT_MARGIN_CONFIG = {
+    "reg_t_initial_pct": DEFAULT_SHORT_MARGIN_RATIO,
+    "maintenance_pct": 0.3,
+    "borrow_fee_threshold_pct": 1.0,
+    "max_annual_borrow_fee_pct": 30.0,
+    "htb_size_haircut_pct": 0.2,
+}
+DEFAULT_LONG_TARGET_PCT = 0.1
+DEFAULT_SHORT_TARGET_PCT = 0.08
 
 CORE_SIGNAL_TICKERS = ["SPY", "QQQ", "DIA", "IWM"]
 REGIME_SUPPORT_TICKERS = ["QQQ", "NVDA", "AAOI"]

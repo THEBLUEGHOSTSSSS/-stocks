@@ -5,20 +5,26 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
 from config import (
     AAOX_UNDERLYING,
+    ACCOUNT_FILE,
     CACHE_TTL_SECONDS,
+    DEFAULT_LONG_TARGET_PCT,
     CORE_SIGNAL_TICKERS,
     DEFAULT_KELLY_FRACTION,
     DEFAULT_HOLDING_TICKER,
+    DEFAULT_SHORT_MARGIN_RATIO,
+    DEFAULT_SHORT_TARGET_PCT,
     HOLDINGS_FILE,
     OPTIONS_TICKER,
     RADAR_UNIVERSE,
     REGIME_SUPPORT_TICKERS,
     RISK_FREE_RATE,
+    SHORT_MARGIN_CONFIG,
     TICKER_METADATA,
     TICKER_SUGGESTION_UNIVERSE,
 )
@@ -26,6 +32,7 @@ from data.fetcher import (
     batch_history,
     collect_fetch_notices,
     collect_fetch_warnings,
+    get_short_borrow_metrics,
     get_latest_quote,
     get_market_session_quote,
     get_news_items,
@@ -39,11 +46,25 @@ from data.sentiment import build_news_features
 from models.kelly import continuous_kelly
 from models.regime import classify_market_regime, detect_breakdown_signal, detect_sigma_event
 from models.signals import calculate_rolling_alpha, build_candidate_trade_profile, build_trade_profile, should_force_observe
+from portfolio.account import compute_account_overview, compute_short_margin_profile, load_account_state, save_account_state
 from portfolio.holdings import enrich_holdings_with_quotes, frame_to_holdings, load_holdings, save_holdings
 from reports.generator import build_execution_payload, build_markdown_report, save_report_bundle
 
 
 st.set_page_config(page_title="美股量化半自动助手", layout="wide")
+
+
+SIDE_LABELS = {
+    "LONG": "多头",
+    "SHORT": "空头",
+    "FLAT": "空仓",
+}
+
+
+def _bool_display(value: Any) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    return "是" if bool(value) else "否"
 
 
 def _ticker_meta(ticker: str) -> dict[str, str]:
@@ -62,6 +83,7 @@ def _new_holding_row(ticker: str = "") -> dict[str, Any]:
     return {
         "id": str(uuid4()),
         "ticker": ticker,
+        "side": "LONG",
         "shares": 0.0,
         "cost_basis": 0.0,
         "notes": "",
@@ -74,6 +96,7 @@ def _editor_rows_from_holdings(rows: list[dict[str, Any]]) -> list[dict[str, Any
             {
                 "id": str(uuid4()),
                 "ticker": row.get("ticker", ""),
+                "side": str(row.get("side", "LONG") or "LONG"),
                 "shares": float(row.get("shares", 0.0) or 0.0),
                 "cost_basis": float(row.get("cost_basis", 0.0) or 0.0),
                 "notes": row.get("notes", ""),
@@ -95,6 +118,7 @@ def _collect_sidebar_holdings() -> list[dict[str, Any]]:
         rows.append(
             {
                 "ticker": st.session_state.get(f"holding_ticker_{row_id}", row.get("ticker", "")),
+                "side": st.session_state.get(f"holding_side_{row_id}", str(row.get("side", "LONG") or "LONG")),
                 "shares": st.session_state.get(f"holding_shares_{row_id}", float(row.get("shares", 0.0) or 0.0)),
                 "cost_basis": st.session_state.get(f"holding_cost_{row_id}", float(row.get("cost_basis", 0.0) or 0.0)),
                 "notes": st.session_state.get(f"holding_notes_{row_id}", row.get("notes", "")),
@@ -125,6 +149,7 @@ def _render_sidebar_holding_editor(saved_rows: list[dict[str, Any]]) -> list[dic
     for index, row in enumerate(st.session_state.get("holding_editor_rows", []), start=1):
         row_id = row["id"]
         ticker_key = f"holding_ticker_{row_id}"
+        side_key = f"holding_side_{row_id}"
         shares_key = f"holding_shares_{row_id}"
         cost_key = f"holding_cost_{row_id}"
         note_key = f"holding_notes_{row_id}"
@@ -132,13 +157,14 @@ def _render_sidebar_holding_editor(saved_rows: list[dict[str, Any]]) -> list[dic
         suggestion_key = f"holding_suggestion_{row_id}"
 
         st.session_state.setdefault(ticker_key, row.get("ticker", ""))
+        st.session_state.setdefault(side_key, str(row.get("side", "LONG") or "LONG"))
         st.session_state.setdefault(shares_key, float(row.get("shares", 0.0) or 0.0))
         st.session_state.setdefault(cost_key, float(row.get("cost_basis", 0.0) or 0.0))
         st.session_state.setdefault(note_key, row.get("notes", ""))
 
         with st.container(border=True):
             st.markdown(f"**持仓 {index}**")
-            top_left, top_right = st.columns(2)
+            top_left, top_mid, top_right = st.columns([1.5, 1.0, 1.0])
             with top_left:
                 current_ticker = str(st.session_state.get(ticker_key, row.get("ticker", "")) or "").upper().strip()
                 current_index = TICKER_SUGGESTION_UNIVERSE.index(current_ticker) if current_ticker in TICKER_SUGGESTION_UNIVERSE else None
@@ -166,6 +192,13 @@ def _render_sidebar_holding_editor(saved_rows: list[dict[str, Any]]) -> list[dic
                     st.caption(f"自动识别：{meta.get('name', normalized_ticker)} | {meta.get('category', '未分类')}")
                 else:
                     st.caption("自动识别：未收录，仍可保存并参与行情分析")
+            with top_mid:
+                st.selectbox(
+                    "方向",
+                    options=["LONG", "SHORT"],
+                    format_func=lambda value: SIDE_LABELS.get(value, value),
+                    key=side_key,
+                )
             with top_right:
                 st.number_input(
                     "股数",
@@ -204,18 +237,64 @@ def _render_sidebar_holding_editor(saved_rows: list[dict[str, Any]]) -> list[dic
     return _collect_sidebar_holdings()
 
 
+def _render_sidebar_account_editor(saved_account: dict[str, Any]) -> dict[str, float]:
+    st.subheader("账户资金")
+    total_equity = st.number_input(
+        "账户总权益",
+        min_value=0.0,
+        value=float(saved_account.get("total_equity", 0.0) or 0.0),
+        step=1000.0,
+        format="%.2f",
+        help="如果不填，系统会按当前持仓占用资金估算总权益，闲余资金默认为 0。",
+    )
+    short_margin_ratio = st.slider(
+        "空头基准保证金折算",
+        min_value=0.2,
+        max_value=1.0,
+        value=float(saved_account.get("short_margin_ratio", DEFAULT_SHORT_MARGIN_RATIO) or DEFAULT_SHORT_MARGIN_RATIO),
+        step=0.05,
+        help="Reg T 初始保证金至少按 50% 起算；实际空头占用会在此基础上叠加借券费率与 HTB 约束。",
+    )
+    max_long_position_pct = st.slider(
+        "单笔多头目标仓位上限",
+        min_value=0.02,
+        max_value=0.3,
+        value=float(saved_account.get("max_long_position_pct", DEFAULT_LONG_TARGET_PCT) or DEFAULT_LONG_TARGET_PCT),
+        step=0.01,
+        help="建议挂单不会超过总权益的这一比例。",
+    )
+    max_short_position_pct = st.slider(
+        "单笔空头目标仓位上限",
+        min_value=0.02,
+        max_value=0.2,
+        value=float(saved_account.get("max_short_position_pct", DEFAULT_SHORT_TARGET_PCT) or DEFAULT_SHORT_TARGET_PCT),
+        step=0.01,
+        help="空头默认比多头更保守。",
+    )
+    return {
+        "total_equity": total_equity,
+        "short_margin_ratio": short_margin_ratio,
+        "max_long_position_pct": max_long_position_pct,
+        "max_short_position_pct": max_short_position_pct,
+    }
+
+
 def _display_holdings_frame(holdings_enriched: list[dict[str, Any]]) -> pd.DataFrame:
     if not holdings_enriched:
         return pd.DataFrame()
     frame = pd.DataFrame(holdings_enriched)
+    if "side" in frame.columns:
+        frame["side"] = frame["side"].map(lambda value: SIDE_LABELS.get(str(value).upper(), value))
     return frame.rename(
         columns={
             "ticker": "代码",
+            "side": "方向",
             "shares": "股数",
             "cost_basis": "成本价",
             "notes": "备注",
             "market_price": "最新价",
-            "market_value": "市值",
+            "market_value": "持仓名义金额",
+            "net_exposure": "净敞口",
             "cost_value": "成本市值",
             "pnl": "浮盈亏",
             "pnl_pct": "浮盈亏%",
@@ -233,16 +312,21 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
 
     signal_value_map = {
         "BUY": "买入",
+        "SELL_SHORT": "沽空开仓",
         "IGNORE": "忽略",
         "ADD": "加仓",
+        "ADD_SHORT": "加空",
         "HOLD": "持有/观望",
+        "HOLD_SHORT": "持有空单",
         "REDUCE": "减仓",
+        "COVER": "回补",
         "LIQUIDATE": "清仓",
     }
     mode_value_map = {
         "momentum": "动能延续",
         "neutral": "观望",
         "mean_reversion": "均值回归",
+        "short_breakdown": "破位沽空",
     }
     channel_value_map = {
         "Google News RSS": "Google 新闻 RSS",
@@ -261,6 +345,10 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
         if column in frame.columns:
             frame[column] = frame[column].map(lambda value: mode_value_map.get(value, value))
 
+    for column in ["Trade_Direction", "trade_direction", "Position_Side", "position_side"]:
+        if column in frame.columns:
+            frame[column] = frame[column].map(lambda value: SIDE_LABELS.get(str(value).upper(), value))
+
     for column in ["Price_Source", "price_source", "Latest_News_Channel", "latest_news_channel"]:
         if column in frame.columns:
             frame[column] = frame[column].map(lambda value: channel_value_map.get(value, value))
@@ -273,15 +361,28 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
                 else value
             )
 
-    for column in ["breakout_valid", "fake_breakout", "breakdown", "eligible_for_risk"]:
+    for column in [
+        "breakout_valid",
+        "fake_breakout",
+        "breakdown",
+        "eligible_for_risk",
+        "Is_Hard_To_Borrow",
+        "is_hard_to_borrow",
+        "Prohibit_Short",
+        "prohibit_short",
+    ]:
         if column in frame.columns:
-            frame[column] = frame[column].map(lambda value: "是" if bool(value) else "否")
+            frame[column] = frame[column].map(_bool_display)
 
     return frame.rename(
         columns={
             "Ticker": "代码",
             "ticker": "代码",
             "Signal": "信号",
+            "Trade_Direction": "交易方向",
+            "trade_direction": "交易方向",
+            "Position_Side": "持仓方向",
+            "position_side": "持仓方向",
             "Action_Price": "动作价格",
             "Trailing_Stop_Update": "移动止损",
             "Hard_Stop_Loss": "硬止损",
@@ -314,6 +415,23 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
             "Entry_Limit_Price": "买入价",
             "Initial_Stop_Loss": "止损价",
             "Take_Profit_Price": "止盈价",
+            "Suggested_Shares": "建议股数",
+            "Suggested_Notional": "建议名义金额",
+            "Capital_Usage": "预计资金占用",
+            "Budget_Pct": "建议仓位%",
+            "Sizing_Note": "资金约束说明",
+            "Borrow_Fee_Pct": "借券费率%",
+            "borrow_fee_pct": "借券费率%",
+            "Available_Shares": "可借股数",
+            "available_shares": "可借股数",
+            "Is_Hard_To_Borrow": "难借状态",
+            "is_hard_to_borrow": "难借状态",
+            "Prohibit_Short": "禁空",
+            "prohibit_short": "禁空",
+            "Short_Initial_Margin_Pct": "初始保证金%",
+            "short_initial_margin_pct": "初始保证金%",
+            "Short_Maintenance_Margin_Pct": "维持担保%",
+            "short_maintenance_margin_pct": "维持担保%",
             "stop_loss_pct": "止损幅度",
             "payoff_ratio": "盈亏比",
             "Session_Impact": "会话影响",
@@ -393,17 +511,146 @@ def _build_core_math_inference(
     return inference
 
 
+def _allocation_strength(expected_return_5d: float, win_rate: float) -> float:
+    edge_strength = float(np.clip(abs(expected_return_5d) / 0.08, 0.35, 1.0))
+    quality_strength = float(np.clip(win_rate / 0.65, 0.45, 1.0))
+    return (edge_strength + quality_strength) / 2.0
+
+
+def _short_borrow_block_message(borrow_metrics: dict[str, Any] | None) -> str:
+    metrics = borrow_metrics or {}
+    fee_pct = float(metrics.get("latest_fee_pct") or 0.0)
+    available_shares = int(float(metrics.get("latest_available_shares") or 0.0))
+    reasons: list[str] = []
+    if available_shares <= 0:
+        reasons.append("当前无可借股数")
+    if fee_pct >= float(SHORT_MARGIN_CONFIG["max_annual_borrow_fee_pct"]):
+        reasons.append(
+            f"借券费率 {fee_pct:.2f}%/年 超过 {float(SHORT_MARGIN_CONFIG['max_annual_borrow_fee_pct']):.0f}%/年 上限"
+        )
+    if not reasons:
+        reasons.append("借券条件不满足")
+    return "；".join(reasons) + "，禁止新增空单。"
+
+
+def _short_borrow_order_fields(
+    borrow_metrics: dict[str, Any] | None,
+    account_overview: dict[str, Any],
+) -> dict[str, Any]:
+    if not borrow_metrics:
+        return {
+            "Borrow_Fee_Pct": None,
+            "Available_Shares": None,
+            "Is_Hard_To_Borrow": None,
+            "Prohibit_Short": None,
+            "Short_Initial_Margin_Pct": None,
+            "Short_Maintenance_Margin_Pct": None,
+        }
+
+    margin_profile = compute_short_margin_profile(
+        borrow_metrics,
+        base_margin_ratio=float(
+            account_overview.get("base_short_margin_ratio")
+            or account_overview.get("short_margin_ratio")
+            or DEFAULT_SHORT_MARGIN_RATIO
+        ),
+    )
+    available_shares = int(float(borrow_metrics.get("latest_available_shares") or 0.0))
+    return {
+        "Borrow_Fee_Pct": round(float(margin_profile["borrow_fee_pct"]), 2),
+        "Available_Shares": available_shares,
+        "Is_Hard_To_Borrow": bool(borrow_metrics.get("is_hard_to_borrow")),
+        "Prohibit_Short": bool(borrow_metrics.get("prohibit_short")),
+        "Short_Initial_Margin_Pct": round(float(margin_profile["initial_margin_pct"]) * 100.0, 2),
+        "Short_Maintenance_Margin_Pct": round(float(margin_profile["maintenance_margin_pct"]) * 100.0, 2),
+    }
+
+
+def _suggest_order_budget(
+    reference_price: float,
+    trade_direction: str,
+    expected_return_5d: float,
+    win_rate: float,
+    account_overview: dict[str, Any],
+    available_cash: float,
+    current_position_notional: float = 0.0,
+    borrow_metrics: dict[str, Any] | None = None,
+) -> tuple[int, float, float, float, str]:
+    if reference_price <= 0.0 or available_cash <= 0.0:
+        return 0, 0.0, 0.0, available_cash, "闲余资金不足，暂不建议新增挂单。"
+
+    strength = _allocation_strength(expected_return_5d, win_rate)
+    if trade_direction == "SHORT":
+        if (borrow_metrics or {}).get("prohibit_short"):
+            return 0, 0.0, 0.0, available_cash, _short_borrow_block_message(borrow_metrics)
+
+        base_pct = float(account_overview.get("max_short_position_pct") or DEFAULT_SHORT_TARGET_PCT)
+        margin_profile = compute_short_margin_profile(
+            borrow_metrics,
+            base_margin_ratio=float(
+                account_overview.get("base_short_margin_ratio")
+                or account_overview.get("short_margin_ratio")
+                or DEFAULT_SHORT_MARGIN_RATIO
+            ),
+        )
+        margin_ratio = float(margin_profile["initial_margin_pct"])
+        maintenance_ratio = float(margin_profile["maintenance_margin_pct"])
+        borrow_fee_pct = float(margin_profile["borrow_fee_pct"])
+        target_notional = float(account_overview.get("total_equity") or 0.0) * base_pct * strength
+        sizing_parts = [
+            f"按空头仓位上限与动态保证金约束计算，初始保证金 {margin_ratio * 100.0:.1f}% ，维持担保 {maintenance_ratio * 100.0:.1f}%。"
+        ]
+        if borrow_fee_pct > 0.0:
+            sizing_parts.append(f"借券费率 {borrow_fee_pct:.2f}%/年。")
+        if (borrow_metrics or {}).get("is_hard_to_borrow"):
+            target_notional *= 1.0 - float(SHORT_MARGIN_CONFIG["htb_size_haircut_pct"])
+            sizing_parts.append(
+                f"HTB 标的，目标仓位额外收缩 {float(SHORT_MARGIN_CONFIG['htb_size_haircut_pct']) * 100.0:.0f}%。"
+            )
+        incremental_notional = max(target_notional - current_position_notional, 0.0)
+        max_notional_from_cash = available_cash / margin_ratio if margin_ratio else 0.0
+        suggested_notional = min(incremental_notional, max_notional_from_cash)
+        capital_usage = suggested_notional * margin_ratio
+        sizing_note = " ".join(sizing_parts)
+    else:
+        base_pct = float(account_overview.get("max_long_position_pct") or DEFAULT_LONG_TARGET_PCT)
+        target_notional = float(account_overview.get("total_equity") or 0.0) * base_pct * strength
+        incremental_notional = max(target_notional - current_position_notional, 0.0)
+        suggested_notional = min(incremental_notional, available_cash)
+        capital_usage = suggested_notional
+        sizing_note = "按多头仓位上限与闲余资金约束计算。"
+
+    suggested_shares = int(suggested_notional // reference_price)
+    if trade_direction == "SHORT":
+        available_shares = int(float((borrow_metrics or {}).get("latest_available_shares") or 0.0))
+        if available_shares > 0:
+            suggested_shares = min(suggested_shares, available_shares)
+    if suggested_shares <= 0:
+        return 0, 0.0, 0.0, available_cash, "预算不足以形成最小 1 股挂单。"
+
+    suggested_notional = suggested_shares * reference_price
+    if trade_direction == "SHORT":
+        capital_usage = suggested_notional * margin_ratio
+    else:
+        capital_usage = suggested_notional
+    remaining_cash = max(available_cash - capital_usage, 0.0)
+    return suggested_shares, suggested_notional, capital_usage, remaining_cash, sizing_note
+
+
 def _legacy_order_for_ticker(
+    holding: dict[str, Any],
     ticker: str,
     quote: dict[str, Any],
     expected: dict[str, Any] | None,
     factors: dict[str, Any] | None,
+    account_overview: dict[str, Any],
+    available_cash: float,
     regime: dict[str, Any],
     observe_mode: bool = False,
     observe_reason: str = "",
     sigma_event: dict[str, Any] | None = None,
     breakdown_signal: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], float]:
     close = float(quote.get("close") or 0.0)
     session_label = str(quote.get("session_label") or "休市")
     session_change_pct = quote.get("session_change_pct")
@@ -411,6 +658,9 @@ def _legacy_order_for_ticker(
     atr = float((factors or {}).get("atr_14") or 0.0)
     trailing_multiplier = 2.6 if sigma_event and sigma_event.get("is_2sigma") else 2.0
     trailing_stop = close - atr * trailing_multiplier if atr else close * 0.94
+    position_side = str(holding.get("side") or "LONG").upper()
+    position_notional = float(holding.get("market_value") or 0.0)
+    shares = float(holding.get("shares") or 0.0)
 
     if session_label == "盘前" and session_change_pct is not None and abs(float(session_change_pct)) >= 2.0:
         session_impact = "盘前价格偏离昨收较大，执行价与止损已按盘前价重算。"
@@ -427,6 +677,8 @@ def _legacy_order_for_ticker(
         return {
             "Ticker": ticker,
             "Signal": "LIQUIDATE" if should_liquidate else "HOLD",
+            "Position_Side": position_side,
+            "Trade_Direction": position_side,
             "Reference_Price": round(close, 2) if close else None,
             "Market_Session": session_label,
             "Regular_Close": round(float(regular_close), 2) if regular_close else None,
@@ -437,69 +689,168 @@ def _legacy_order_for_ticker(
             "Price_Source": quote.get("price_source"),
             "Signal_Mode": "风控清仓" if should_liquidate else "观望持有",
             "Gate_Reason": "底层板块破位或市场过弱" if should_liquidate else (observe_reason if observe_mode else "底层未破位"),
-        }
+        }, available_cash
 
     expected_profile = expected or {}
     expected_return_5d = float(expected_profile.get("expected_return_5d") or 0.0)
     signal_mode = expected_profile.get("signal_mode", "neutral")
-    if expected_return_5d < -0.015 or regime["score"] < 0.35:
-        signal = "REDUCE"
-    elif observe_mode or not expected_profile.get("eligible_for_risk"):
-        signal = "HOLD"
-    elif signal_mode == "momentum" and expected_return_5d > 0.02:
-        signal = "ADD"
+    borrow_metrics = get_short_borrow_metrics(ticker) if position_side == "SHORT" else None
+
+    if position_side == "SHORT":
+        if signal_mode == "short_breakdown" and not observe_mode and expected_profile.get("eligible_for_risk"):
+            signal = "ADD_SHORT"
+        elif expected_return_5d > 0.015 or regime["score"] > 0.55 or signal_mode in {"momentum", "mean_reversion"}:
+            signal = "COVER"
+        else:
+            signal = "HOLD_SHORT"
     else:
-        signal = "HOLD"
+        if expected_return_5d < -0.015 or regime["score"] < 0.35:
+            signal = "REDUCE"
+        elif observe_mode or not expected_profile.get("eligible_for_risk"):
+            signal = "HOLD"
+        elif signal_mode == "momentum" and expected_return_5d > 0.02:
+            signal = "ADD"
+        else:
+            signal = "HOLD"
+
+    suggested_shares = 0
+    suggested_notional = 0.0
+    capital_usage = 0.0
+    sizing_note = "当前以风控和跟踪为主，不建议新增资金。"
+    remaining_cash = available_cash
+    if signal in {"ADD", "ADD_SHORT"} and close > 0.0:
+        trade_direction = "SHORT" if signal == "ADD_SHORT" else "LONG"
+        if trade_direction == "SHORT" and (borrow_metrics or {}).get("prohibit_short"):
+            signal = "HOLD_SHORT"
+            sizing_note = _short_borrow_block_message(borrow_metrics)
+        else:
+            suggested_shares, suggested_notional, capital_usage, remaining_cash, sizing_note = _suggest_order_budget(
+                close,
+                trade_direction,
+                expected_return_5d,
+                float(expected_profile.get("win_rate") or 0.0),
+                account_overview,
+                available_cash,
+                current_position_notional=position_notional,
+                borrow_metrics=borrow_metrics if trade_direction == "SHORT" else None,
+            )
+            if suggested_shares <= 0:
+                signal = "HOLD_SHORT" if signal == "ADD_SHORT" else "HOLD"
+    elif signal == "REDUCE":
+        suggested_shares = max(int(np.ceil(shares * 0.5)), 1) if shares > 0 else 0
+        sizing_note = "默认建议先减半，保留观察仓。"
+    elif signal in {"COVER", "LIQUIDATE"}:
+        suggested_shares = int(np.ceil(shares)) if shares > 0 else 0
+        sizing_note = "默认建议回补/平掉当前全部仓位。"
+
+    gate_reason = observe_reason if observe_mode and signal != "REDUCE" else expected_profile.get("gate_reason", "")
+    if position_side == "SHORT" and borrow_metrics:
+        if borrow_metrics.get("prohibit_short") and signal != "COVER":
+            gate_reason = _short_borrow_block_message(borrow_metrics)
+        elif borrow_metrics.get("is_hard_to_borrow"):
+            htb_reason = f"HTB：借券费率 {float(borrow_metrics.get('latest_fee_pct') or 0.0):.2f}%/年"
+            gate_reason = f"{gate_reason} / {htb_reason}" if gate_reason else htb_reason
 
     return {
         "Ticker": ticker,
         "Signal": signal,
+        "Position_Side": position_side,
+        "Trade_Direction": "SHORT" if signal in {"ADD_SHORT", "COVER", "HOLD_SHORT"} else "LONG",
         "Reference_Price": round(close, 2) if close else None,
         "Market_Session": session_label,
         "Regular_Close": round(float(regular_close), 2) if regular_close else None,
         "Session_Change_Pct": round(float(session_change_pct), 2) if session_change_pct is not None else None,
         "Action_Price": round(close, 2) if close else None,
         "Trailing_Stop_Update": round(trailing_stop, 2) if trailing_stop else None,
+        "Suggested_Shares": suggested_shares,
+        "Suggested_Notional": round(suggested_notional, 2) if suggested_notional else 0.0,
+        "Capital_Usage": round(capital_usage, 2) if capital_usage else 0.0,
+        "Budget_Pct": round((suggested_notional / float(account_overview.get("total_equity") or 1.0)) * 100.0, 2) if suggested_notional and account_overview.get("total_equity") else 0.0,
+        "Sizing_Note": sizing_note,
         "Session_Impact": session_impact,
         "Price_As_Of": quote.get("as_of"),
         "Price_Source": quote.get("price_source"),
         "Signal_Mode": expected_profile.get("signal_label", "观望"),
-        "Gate_Reason": observe_reason if observe_mode and signal != "REDUCE" else expected_profile.get("gate_reason", ""),
-    }
+        "Gate_Reason": gate_reason,
+        **_short_borrow_order_fields(borrow_metrics, account_overview),
+    }, remaining_cash
 
 
 def _build_new_alpha_targets(
     candidates: list[dict[str, Any]],
+    account_overview: dict[str, Any],
     observe_mode: bool,
     observe_reason: str,
 ) -> list[dict[str, Any]]:
     orders: list[dict[str, Any]] = []
-    for candidate in candidates[:3]:
+    remaining_cash = float(account_overview.get("idle_cash") or 0.0)
+    for candidate in candidates[:5]:
         close = float(candidate.get("close") or 0.0)
         reference_price = float(candidate.get("reference_price") or close or 0.0)
         stop_pct = float(candidate.get("stop_loss_pct") or 0.03)
         expected_return_5d = float(candidate.get("expected_return_5d") or 0.0)
         payoff_ratio = float(candidate.get("payoff_ratio") or 0.0)
-        entry_buffer = 0.005 if candidate.get("breakout_valid") else 0.01
-        entry_limit_price = round(reference_price * (1.0 - entry_buffer), 2) if reference_price else None
-        initial_stop_loss = round(entry_limit_price * (1.0 - stop_pct), 2) if entry_limit_price else None
+        trade_direction = str(candidate.get("trade_direction") or ("SHORT" if candidate.get("breakdown") else "LONG")).upper()
+        borrow_metrics = get_short_borrow_metrics(candidate["ticker"]) if trade_direction == "SHORT" else None
+        entry_buffer = 0.005 if candidate.get("breakout_valid") or candidate.get("breakdown") else 0.01
+        if trade_direction == "SHORT":
+            entry_limit_price = round(reference_price * (1.0 + entry_buffer), 2) if reference_price else None
+            initial_stop_loss = round(entry_limit_price * (1.0 + stop_pct), 2) if entry_limit_price else None
+        else:
+            entry_limit_price = round(reference_price * (1.0 - entry_buffer), 2) if reference_price else None
+            initial_stop_loss = round(entry_limit_price * (1.0 - stop_pct), 2) if entry_limit_price else None
         take_profit_pct = max(expected_return_5d, stop_pct * max(payoff_ratio, 1.0), 0.01)
-        take_profit_price = round(entry_limit_price * (1.0 + take_profit_pct), 2) if entry_limit_price else None
+        if trade_direction == "SHORT":
+            take_profit_price = round(entry_limit_price * (1.0 - max(abs(take_profit_pct), 0.01)), 2) if entry_limit_price else None
+        else:
+            take_profit_price = round(entry_limit_price * (1.0 + take_profit_pct), 2) if entry_limit_price else None
         session_label = str(candidate.get("session_label") or "休市")
         session_change_pct = candidate.get("session_change_pct")
         if session_label == "盘前" and session_change_pct is not None and float(session_change_pct) >= 2.5:
             session_impact = "盘前跳空较大，目标价已按盘前价重算，避免直接追高。"
+        elif session_label == "盘前" and session_change_pct is not None and float(session_change_pct) <= -2.5:
+            session_impact = "盘前向下跳空较大，空头挂单价已按盘前价重算，避免追空过度。"
         elif session_label == "盘后" and session_change_pct is not None and abs(float(session_change_pct)) >= 2.0:
             session_impact = "盘后波动明显，次日开盘前需再次确认承接。"
         elif session_label == "盘中":
             session_impact = "盘中价格实时变化，挂单价需预留滑点。"
         else:
             session_impact = "当前主要按常规盘结构参考。"
-        signal = "BUY" if not observe_mode and candidate.get("eligible_for_risk") else "IGNORE"
+
+        signal = "IGNORE"
+        suggested_shares = 0
+        suggested_notional = 0.0
+        capital_usage = 0.0
+        sizing_note = "当前不建议新开仓。"
+        gate_reason = observe_reason if observe_mode else str(candidate.get("gate_reason") or "")
+        if borrow_metrics and borrow_metrics.get("prohibit_short"):
+            block_reason = _short_borrow_block_message(borrow_metrics)
+            gate_reason = f"{gate_reason} / {block_reason}" if gate_reason and not observe_mode else block_reason if not observe_mode else f"{gate_reason} / {block_reason}"
+        elif borrow_metrics and borrow_metrics.get("is_hard_to_borrow"):
+            htb_reason = f"HTB：借券费率 {float(borrow_metrics.get('latest_fee_pct') or 0.0):.2f}%/年"
+            gate_reason = f"{gate_reason} / {htb_reason}" if gate_reason else htb_reason
+        if not observe_mode and candidate.get("eligible_for_risk") and entry_limit_price:
+            if trade_direction == "SHORT" and (borrow_metrics or {}).get("prohibit_short"):
+                signal = "IGNORE"
+                sizing_note = _short_borrow_block_message(borrow_metrics)
+            else:
+                signal = "SELL_SHORT" if trade_direction == "SHORT" else "BUY"
+                suggested_shares, suggested_notional, capital_usage, remaining_cash, sizing_note = _suggest_order_budget(
+                    float(entry_limit_price),
+                    trade_direction,
+                    expected_return_5d,
+                    float(candidate.get("win_rate") or 0.0),
+                    account_overview,
+                    remaining_cash,
+                    borrow_metrics=borrow_metrics if trade_direction == "SHORT" else None,
+                )
+                if suggested_shares <= 0:
+                    signal = "IGNORE"
         orders.append(
             {
                 "Ticker": candidate["ticker"],
                 "Signal": signal,
+                "Trade_Direction": trade_direction,
                 "Reference_Price": round(reference_price, 2) if reference_price else None,
                 "Market_Session": session_label,
                 "Regular_Close": round(float(candidate.get("regular_close") or close or 0.0), 2) if (candidate.get("regular_close") or close) else None,
@@ -507,6 +858,11 @@ def _build_new_alpha_targets(
                 "Entry_Limit_Price": entry_limit_price,
                 "Initial_Stop_Loss": initial_stop_loss,
                 "Take_Profit_Price": take_profit_price,
+                "Suggested_Shares": suggested_shares,
+                "Suggested_Notional": round(suggested_notional, 2) if suggested_notional else 0.0,
+                "Capital_Usage": round(capital_usage, 2) if capital_usage else 0.0,
+                "Budget_Pct": round((suggested_notional / float(account_overview.get("total_equity") or 1.0)) * 100.0, 2) if suggested_notional and account_overview.get("total_equity") else 0.0,
+                "Sizing_Note": sizing_note,
                 "Session_Impact": session_impact,
                 "Price_As_Of": candidate.get("price_as_of"),
                 "Price_Source": candidate.get("price_source"),
@@ -519,7 +875,8 @@ def _build_new_alpha_targets(
                 "Target_EV": round(float(candidate.get("target_ev") or 0.0), 4),
                 "Win_Rate": round(float(candidate.get("win_rate") or 0.0), 4),
                 "Signal_Mode": candidate.get("signal_label", "观望"),
-                "Gate_Reason": observe_reason if observe_mode else candidate.get("gate_reason", ""),
+                "Gate_Reason": gate_reason,
+                **_short_borrow_order_fields(borrow_metrics, account_overview),
             }
         )
     return orders
@@ -687,6 +1044,7 @@ st.title("美股量化半自动助手")
 st.caption("本地采集公开数据，生成信号与报告。所有下单由你自行决定。")
 
 saved_holdings = load_holdings(HOLDINGS_FILE)
+saved_account_state = load_account_state(ACCOUNT_FILE)
 with st.sidebar:
     st.subheader("持仓录入")
     current_editor_holdings = _render_sidebar_holding_editor(saved_holdings)
@@ -696,6 +1054,14 @@ with st.sidebar:
         st.success("持仓已保存")
 
     st.caption("持仓会保存到 portfolio/holdings.json")
+
+    current_account_state = _render_sidebar_account_editor(saved_account_state)
+    if st.button("保存资金参数", use_container_width=True):
+        normalized_account = save_account_state(current_account_state, ACCOUNT_FILE)
+        st.session_state["saved_account_state"] = normalized_account
+        st.success("资金参数已保存")
+
+    st.caption("资金参数会保存到 portfolio/account.json")
 
     kelly_fraction = st.slider(
         "凯利折扣",
@@ -717,6 +1083,12 @@ if run_clicked:
 
     quote_map = analysis["quote_map"]
     holdings_enriched = enrich_holdings_with_quotes(holdings, quote_map)
+    short_borrow_metrics = {
+        item["ticker"]: get_short_borrow_metrics(item["ticker"])
+        for item in holdings_enriched
+        if str(item.get("side") or "LONG").upper() == "SHORT" and item.get("ticker")
+    }
+    account_overview = compute_account_overview(holdings_enriched, current_account_state, borrow_metrics=short_borrow_metrics)
     core_signal_profiles = analysis["core_signal_profiles"]
     holding_profiles = analysis["holding_profiles"]
     factor_map = analysis["factor_map"]
@@ -727,36 +1099,42 @@ if run_clicked:
     observe_reason = str(analysis.get("observe_reason") or "")
 
     legacy_orders: list[dict[str, Any]] = []
+    remaining_cash = float(account_overview.get("idle_cash") or 0.0)
     for holding in holdings_enriched:
         ticker = holding["ticker"]
         if ticker == "AAOX":
-            legacy_orders.append(
-                _legacy_order_for_ticker(
+            order, remaining_cash = _legacy_order_for_ticker(
+                holding,
                     ticker,
                     quote_map.get(ticker, get_latest_quote(ticker)),
                     holding_profiles.get("AAOI"),
                     factor_map.get("AAOI"),
+                    account_overview,
+                    remaining_cash,
                     regime,
                     observe_mode,
                     observe_reason,
                     breakdown_signal=aaoi_breakdown,
                 )
-            )
+            legacy_orders.append(order)
         else:
-            legacy_orders.append(
-                _legacy_order_for_ticker(
+            order, remaining_cash = _legacy_order_for_ticker(
+                holding,
                     ticker,
                     quote_map.get(ticker, {}),
                     holding_profiles.get(ticker),
                     factor_map.get(ticker),
+                    account_overview,
+                    remaining_cash,
                     regime,
                     observe_mode,
                     observe_reason,
                     sigma_events.get(ticker),
                 )
-            )
+            legacy_orders.append(order)
 
-    new_alpha_targets = _build_new_alpha_targets(analysis["radar_candidates"], observe_mode, observe_reason)
+    account_overview["idle_cash_after_legacy_orders"] = remaining_cash
+    new_alpha_targets = _build_new_alpha_targets(analysis["radar_candidates"], account_overview, observe_mode, observe_reason)
     mathematical_inference = _build_core_math_inference(factor_map, core_signal_profiles)
     quant_logic_log = _build_quant_logic_log(
         regime,
@@ -771,6 +1149,7 @@ if run_clicked:
         analysis_date=datetime.now().strftime("%Y-%m-%d"),
         regime=regime,
         macro_snapshot=analysis["macro_snapshot"],
+        account_overview=account_overview,
         mathematical_inference=mathematical_inference,
         legacy_orders=legacy_orders,
         new_alpha_targets=new_alpha_targets,
@@ -798,6 +1177,13 @@ if run_clicked:
     top_mid.metric("风险偏好分数", f"{regime['score']:.2f}")
     top_right.metric("总建议风险敞口", f"{analysis['kelly']['total_exposure'] * 100:.1f}%")
 
+    budget_col1, budget_col2, budget_col3, budget_col4, budget_col5 = st.columns(5)
+    budget_col1.metric("账户总权益", f"${account_overview['total_equity']:,.0f}")
+    budget_col2.metric("市场资金", f"${account_overview['market_funds']:,.0f}")
+    budget_col3.metric("闲余资金", f"${account_overview['idle_cash']:,.0f}")
+    budget_col4.metric("多头敞口", f"${account_overview['long_market_value']:,.0f}")
+    budget_col5.metric("空头敞口", f"${account_overview['short_market_value']:,.0f}")
+
     if observe_mode:
         st.warning(f"当前触发空仓/观望强约束：{observe_reason}")
 
@@ -811,6 +1197,8 @@ if run_clicked:
         st.json(analysis["options_summary"])
 
     with holdings_tab:
+        st.subheader("账户资金概览")
+        st.json(account_overview)
         st.subheader("持仓市值")
         if holdings_enriched:
             holdings_frame = _display_holdings_frame(holdings_enriched)

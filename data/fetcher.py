@@ -12,7 +12,7 @@ import pandas as pd
 import requests
 import yfinance as yf
 
-from config import TICKER_METADATA
+from config import SHORT_MARGIN_CONFIG, TICKER_METADATA
 
 
 _FETCH_WARNINGS: dict[str, str] = {}
@@ -66,6 +66,61 @@ def collect_fetch_warnings() -> list[str]:
 
 def collect_fetch_notices() -> list[str]:
     return list(_FETCH_NOTICES.values())
+
+
+@lru_cache(maxsize=256)
+def get_short_borrow_metrics(ticker: str) -> dict[str, Any]:
+    normalized = str(ticker or "").strip().upper()
+    if not normalized:
+        return {
+            "ticker": normalized,
+            "latest_fee_pct": 0.0,
+            "latest_available_shares": 0,
+            "is_hard_to_borrow": False,
+            "prohibit_short": True,
+            "updated_at": None,
+            "source": "IBorrowDesk",
+            "error": "ticker missing",
+        }
+
+    try:
+        response = requests.get(
+            f"https://www.iborrowdesk.com/api/ticker/{quote_plus(normalized)}",
+            timeout=10,
+            headers=_DEFAULT_HEADERS,
+        )
+        response.raise_for_status()
+        payload = response.json() or {}
+        latest_fee_pct = max(_safe_float(payload.get("latest_fee")) or 0.0, 0.0)
+        available_raw = _safe_float(payload.get("latest_available_shares"))
+        latest_available_shares = int(available_raw) if available_raw is not None else 0
+        is_hard_to_borrow = latest_fee_pct >= float(SHORT_MARGIN_CONFIG["borrow_fee_threshold_pct"])
+        prohibit_short = (
+            latest_available_shares <= 0
+            or latest_fee_pct >= float(SHORT_MARGIN_CONFIG["max_annual_borrow_fee_pct"])
+        )
+        return {
+            "ticker": normalized,
+            "latest_fee_pct": latest_fee_pct,
+            "latest_available_shares": latest_available_shares,
+            "is_hard_to_borrow": is_hard_to_borrow,
+            "prohibit_short": prohibit_short,
+            "updated_at": payload.get("updated"),
+            "source": "IBorrowDesk",
+            "error": None,
+        }
+    except Exception as exc:
+        register_fetch_warning("借券数据", normalized, exc, provider="IBorrowDesk")
+        return {
+            "ticker": normalized,
+            "latest_fee_pct": 0.0,
+            "latest_available_shares": 0,
+            "is_hard_to_borrow": False,
+            "prohibit_short": True,
+            "updated_at": None,
+            "source": "IBorrowDesk",
+            "error": _summarize_exception(exc),
+        }
 
 
 def _normalize_history_frame(frame: pd.DataFrame) -> pd.DataFrame:
