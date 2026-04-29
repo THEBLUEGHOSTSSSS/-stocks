@@ -92,6 +92,7 @@ def compute_account_overview(
         for item in holdings_enriched
         if str(item.get("side") or "LONG").upper() == "SHORT"
     )
+    total_pnl = sum(float(item.get("pnl") or 0.0) for item in holdings_enriched)
     net_exposure = sum(float(item.get("net_exposure") or 0.0) for item in holdings_enriched)
     base_margin_ratio = float(normalized_state["short_margin_ratio"])
     borrow_metrics_lookup = borrow_metrics or {}
@@ -160,6 +161,7 @@ def compute_account_overview(
         "short_margin_ratio": effective_margin_ratio,
         "short_maintenance_ratio": maintenance_margin_ratio,
         "market_funds": market_funds,
+        "total_pnl": total_pnl,
         "long_market_value": long_market_value,
         "short_market_value": short_market_value,
         "short_margin_used": short_margin_used,

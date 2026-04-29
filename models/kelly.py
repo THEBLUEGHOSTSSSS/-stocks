@@ -20,12 +20,15 @@ def continuous_kelly(
     returns_frame: pd.DataFrame,
     risk_free_rate: float | None = None,
     kelly_fraction: float = DEFAULT_KELLY_FRACTION,
+    asset_volatility: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     if not expected_returns or returns_frame.empty:
         return {
             "weights": {},
             "total_exposure": 0.0,
             "covariance": pd.DataFrame(),
+            "volatility_scalars": {},
+            "asset_volatility": {},
         }
 
     columns = [column for column in returns_frame.columns if column in expected_returns]
@@ -34,6 +37,8 @@ def continuous_kelly(
             "weights": {},
             "total_exposure": 0.0,
             "covariance": pd.DataFrame(),
+            "volatility_scalars": {},
+            "asset_volatility": {},
         }
 
     aligned_returns = returns_frame[columns].dropna(how="any")
@@ -42,6 +47,8 @@ def continuous_kelly(
             "weights": {},
             "total_exposure": 0.0,
             "covariance": pd.DataFrame(),
+            "volatility_scalars": {},
+            "asset_volatility": {},
         }
 
     covariance = aligned_returns.cov()
@@ -53,6 +60,25 @@ def continuous_kelly(
     raw_weights = np.maximum(raw_weights, 0.0)
     scaled_weights = raw_weights * max(kelly_fraction, 0.0)
 
+    fallback_volatility = aligned_returns.std(ddof=0) * np.sqrt(TRADING_DAYS_PER_YEAR)
+    resolved_asset_volatility: dict[str, float] = {}
+    volatility_scalars: dict[str, float] = {}
+    for column in columns:
+        raw_volatility = (asset_volatility or {}).get(column)
+        try:
+            resolved_volatility = float(raw_volatility)
+        except (TypeError, ValueError):
+            resolved_volatility = float(fallback_volatility.get(column, np.nan))
+        if not np.isfinite(resolved_volatility) or resolved_volatility <= 0.0:
+            resolved_volatility = float(fallback_volatility.get(column, np.nan))
+        if not np.isfinite(resolved_volatility) or resolved_volatility <= 0.0:
+            volatility_scalars[column] = 1.0
+            continue
+        resolved_asset_volatility[column] = resolved_volatility
+        volatility_scalars[column] = float(np.clip(0.35 / resolved_volatility, 0.35, 1.0))
+
+    scaled_weights = scaled_weights * np.array([volatility_scalars.get(column, 1.0) for column in columns], dtype=float)
+
     total_exposure = float(scaled_weights.sum())
     if total_exposure > 1.0:
         scaled_weights = scaled_weights / total_exposure
@@ -63,4 +89,6 @@ def continuous_kelly(
         "weights": weights,
         "total_exposure": total_exposure,
         "covariance": covariance,
+        "volatility_scalars": volatility_scalars,
+        "asset_volatility": resolved_asset_volatility,
     }

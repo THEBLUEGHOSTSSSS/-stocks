@@ -3,6 +3,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 SNAPSHOTS_DIR = BASE_DIR / "snapshots"
 HOLDINGS_FILE = BASE_DIR / "portfolio" / "holdings.json"
+HOLDINGS_HISTORY_FILE = BASE_DIR / "portfolio" / "holdings_history.json"
 ACCOUNT_FILE = BASE_DIR / "portfolio" / "account.json"
 
 CACHE_TTL_SECONDS = 300

@@ -2,8 +2,8 @@
   {
     "ticker": "NVDA",
     "side": "LONG",
-    "shares": 7.0,
-    "cost_basis": 176.952,
+    "shares": 6.0,
+    "cost_basis": 171.611,
     "notes": "半导体/AI算力"
   },
   {
@@ -16,22 +16,8 @@
   {
     "ticker": "PLTR",
     "side": "LONG",
-    "shares": 2.0,
+    "shares": 1.0,
     "cost_basis": 151.15,
     "notes": "软件/数据分析"
-  },
-  {
-    "ticker": "AMD",
-    "side": "LONG",
-    "shares": 2.0,
-    "cost_basis": 347.0,
-    "notes": "半导体/CPU GPU"
-  },
-  {
-    "ticker": "ARM",
-    "side": "LONG",
-    "shares": 8.0,
-    "cost_basis": 233.0,
-    "notes": "半导体/IP授权"
   }
 ]

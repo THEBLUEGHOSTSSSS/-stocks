@@ -82,7 +82,7 @@ def build_factor_snapshot(
     rsi = compute_rsi(close)
     atr = compute_atr(history)
     volatility = compute_historical_volatility(close)
-    log_return_5d = compute_log_return(close, periods=5)
+    log_return_10d = compute_log_return(close, periods=10)
     volume_ratio = compute_volume_ratio(volume)
     sma_20 = close.rolling(window=20, min_periods=20).mean()
     breakout_20d = close > close.shift(1).rolling(window=20, min_periods=20).max()
@@ -93,15 +93,31 @@ def build_factor_snapshot(
 
     latest = history.iloc[-1]
     previous = history.iloc[-2] if len(history) > 1 else latest
+    latest_close = float(latest.get("close", np.nan))
+    latest_open = float(latest.get("open", np.nan))
+    latest_high = float(latest.get("high", np.nan))
+    latest_volatility = float(volatility.iloc[-1]) if not pd.isna(volatility.iloc[-1]) else None
+    latest_log_return_10d = float(log_return_10d.iloc[-1]) if not pd.isna(log_return_10d.iloc[-1]) else None
+
+    upper_shadow_pct = None
+    if np.isfinite(latest_high) and np.isfinite(latest_open) and np.isfinite(latest_close) and latest_close > 0.0:
+        upper_shadow_pct = float(max(latest_high - max(latest_open, latest_close), 0.0) / latest_close * 100.0)
+
+    intraday_drawdown_pct = None
+    if np.isfinite(latest_high) and np.isfinite(latest_close) and latest_high > 0.0:
+        intraday_drawdown_pct = float(max(latest_high - latest_close, 0.0) / latest_high * 100.0)
+
     return {
-        "close": float(latest.get("close", np.nan)),
+        "close": latest_close,
         "daily_return_pct": float(((latest.get("close", np.nan) / previous.get("close", np.nan)) - 1.0) * 100.0),
-        "log_return_5d": float(log_return_5d.iloc[-1]) if not pd.isna(log_return_5d.iloc[-1]) else None,
-        "hist_vol_20d": float(volatility.iloc[-1]) if not pd.isna(volatility.iloc[-1]) else None,
+        "log_return_10d": latest_log_return_10d,
+        "hist_vol_20d": latest_volatility,
         "rsi_14": float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else None,
         "atr_14": float(atr.iloc[-1]) if not pd.isna(atr.iloc[-1]) else None,
         "volume_ratio_20d": float(volume_ratio.iloc[-1]) if not pd.isna(volume_ratio.iloc[-1]) else None,
         "sma_20": float(sma_20.iloc[-1]) if not pd.isna(sma_20.iloc[-1]) else None,
         "breakout_20d": bool(breakout_20d.fillna(False).iloc[-1]),
+        "upper_shadow_pct": upper_shadow_pct,
+        "intraday_drawdown_pct": intraday_drawdown_pct,
         "relative_strength_20d_vs_benchmark": relative_strength,
     }

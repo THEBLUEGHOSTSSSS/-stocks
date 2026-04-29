@@ -403,6 +403,105 @@ def _safe_float(value: Any) -> float | None:
         return None
 
 
+def _coerce_timestamp(value: Any) -> pd.Timestamp | None:
+    if value is None:
+        return None
+    try:
+        timestamp = pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(timestamp):
+        return None
+    if timestamp.tzinfo is not None:
+        timestamp = timestamp.tz_convert(None)
+    return timestamp.normalize()
+
+
+def _extract_upcoming_earnings_date(calendar_payload: Any) -> pd.Timestamp | None:
+    candidates: list[pd.Timestamp] = []
+
+    if isinstance(calendar_payload, dict):
+        raw_value = calendar_payload.get("Earnings Date") or calendar_payload.get("earningsDate")
+        if isinstance(raw_value, (list, tuple, set)):
+            iterable = raw_value
+        else:
+            iterable = [raw_value]
+        for item in iterable:
+            parsed = _coerce_timestamp(item)
+            if parsed is not None:
+                candidates.append(parsed)
+    elif isinstance(calendar_payload, pd.DataFrame):
+        for column in ["Earnings Date", "earningsDate"]:
+            if column not in calendar_payload.columns:
+                continue
+            for item in calendar_payload[column].tolist():
+                parsed = _coerce_timestamp(item)
+                if parsed is not None:
+                    candidates.append(parsed)
+    elif isinstance(calendar_payload, pd.Series):
+        for item in calendar_payload.tolist():
+            parsed = _coerce_timestamp(item)
+            if parsed is not None:
+                candidates.append(parsed)
+
+    if not candidates:
+        return None
+
+    today = pd.Timestamp.now(tz="UTC").tz_convert(None).normalize()
+    future_candidates = sorted(candidate for candidate in candidates if candidate >= today)
+    if future_candidates:
+        return future_candidates[0]
+    return None
+
+
+@lru_cache(maxsize=256)
+def get_upcoming_earnings(ticker: str) -> dict[str, Any]:
+    normalized = str(ticker or "").strip().upper()
+    if not normalized:
+        return {
+            "ticker": normalized,
+            "earnings_date": None,
+            "days_to_earnings": None,
+            "earnings_high_risk": False,
+            "earnings_source": "yfinance.calendar",
+            "earnings_error": "ticker missing",
+        }
+
+    try:
+        calendar_payload = yf.Ticker(normalized).calendar
+        earnings_date = _extract_upcoming_earnings_date(calendar_payload)
+        if earnings_date is None:
+            return {
+                "ticker": normalized,
+                "earnings_date": None,
+                "days_to_earnings": None,
+                "earnings_high_risk": False,
+                "earnings_source": "yfinance.calendar",
+                "earnings_error": None,
+            }
+
+        today = pd.Timestamp.now(tz="UTC").tz_convert(None).normalize()
+        days_to_earnings = int(pd.bdate_range(today, earnings_date, inclusive="left").size)
+        return {
+            "ticker": normalized,
+            "earnings_date": earnings_date.date().isoformat(),
+            "days_to_earnings": days_to_earnings,
+            "earnings_high_risk": days_to_earnings <= 3,
+            "earnings_source": "yfinance.calendar",
+            "earnings_error": None,
+        }
+    except Exception as exc:
+        register_fetch_warning("财报日历", normalized, exc)
+        return {
+            "ticker": normalized,
+            "earnings_date": None,
+            "days_to_earnings": None,
+            "earnings_high_risk": False,
+            "earnings_source": "yfinance.calendar",
+            "earnings_error": _summarize_exception(exc),
+        }
+
+
 def _market_session_label(market_state: str | None) -> str:
     normalized = str(market_state or "").upper()
     if normalized.startswith("PRE"):

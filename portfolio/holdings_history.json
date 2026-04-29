@@ -1,0 +1,58 @@
+[
+  {
+    "captured_at": "2026-04-28 19:38:42",
+    "source": "analysis_run",
+    "signature": "[{\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 151.15, \"notes\": \"软件/数据分析\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"PLTR\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "PLTR",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 151.15,
+        "notes": "软件/数据分析"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-04-29 16:02:10",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 151.15, \"notes\": \"软件/数据分析\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"PLTR\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "PLTR",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 151.15,
+        "notes": "软件/数据分析"
+      }
+    ]
+  }
+]
