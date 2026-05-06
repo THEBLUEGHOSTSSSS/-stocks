@@ -1,10 +1,14 @@
 from pathlib import Path
 
+from portfolio.custom_tickers import load_custom_ticker_metadata
+
 BASE_DIR = Path(__file__).resolve().parent
 SNAPSHOTS_DIR = BASE_DIR / "snapshots"
 HOLDINGS_FILE = BASE_DIR / "portfolio" / "holdings.json"
 HOLDINGS_HISTORY_FILE = BASE_DIR / "portfolio" / "holdings_history.json"
 ACCOUNT_FILE = BASE_DIR / "portfolio" / "account.json"
+CUSTOM_TICKERS_FILE = BASE_DIR / "portfolio" / "custom_tickers.json"
+EXCHANGE_TICKERS_FILE = BASE_DIR / "portfolio" / "exchange_tickers.json"
 
 CACHE_TTL_SECONDS = 300
 TRADING_DAYS_PER_YEAR = 252
@@ -78,7 +82,7 @@ RADAR_UNIVERSE = [
     "IONQ",
 ]
 
-TICKER_METADATA = {
+STATIC_TICKER_METADATA = {
     "SPY": {"name": "标普500 ETF", "category": "大盘指数ETF"},
     "QQQ": {"name": "纳斯达克100 ETF", "category": "科技成长指数ETF"},
     "DIA": {"name": "道琼斯工业平均 ETF", "category": "蓝筹指数ETF"},
@@ -125,10 +129,20 @@ TICKER_METADATA = {
     "NBIS": {"name": "Nebius", "category": "AI基础设施"},
     "SOUN": {"name": "SoundHound", "category": "语音AI"},
     "IONQ": {"name": "IonQ", "category": "量子计算"},
+    "NNE": {"name": "Nano Nuclear Energy", "category": "先进核能/SMR"},
+}
+
+CUSTOM_TICKER_METADATA = load_custom_ticker_metadata(CUSTOM_TICKERS_FILE)
+EXCHANGE_TICKER_METADATA = load_custom_ticker_metadata(EXCHANGE_TICKERS_FILE)
+
+TICKER_METADATA = {
+    **STATIC_TICKER_METADATA,
+    **EXCHANGE_TICKER_METADATA,
+    **CUSTOM_TICKER_METADATA,
 }
 
 TICKER_SUGGESTION_UNIVERSE = sorted(
-    set(CORE_SIGNAL_TICKERS + REGIME_SUPPORT_TICKERS + RADAR_UNIVERSE + ["AAOX"]) 
+    set([*CORE_SIGNAL_TICKERS, *REGIME_SUPPORT_TICKERS, *RADAR_UNIVERSE, "AAOX", *STATIC_TICKER_METADATA.keys(), *CUSTOM_TICKER_METADATA.keys()])
 )
 
 POSITIVE_KEYWORDS = {

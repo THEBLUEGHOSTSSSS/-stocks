@@ -40,8 +40,10 @@
 4. models：市场状态、信号、凯利等模型。
 5. portfolio/holdings.json：持仓存储文件。
 6. portfolio/account.json：账户总权益、空头基准保证金和单笔仓位上限。
-7. reports：报告构建与落盘逻辑。
-8. snapshots：保存 Markdown 与 JSON 报告的目录。
+7. portfolio/custom_tickers.json：自动收录首次输入过的新股票代码和自定义元数据。
+8. portfolio/exchange_tickers.json：一次性导入的公开交易所代码库。
+9. reports：报告构建与落盘逻辑。
+10. snapshots：保存 Markdown 与 JSON 报告的目录。
 
 ## 4. 启动前准备
 
@@ -118,6 +120,8 @@ cd '/Users/guolishuo/Desktop/美股交易 stocks'
 
 1. 直接输入字母，使用候选列表搜索已收录代码。
 2. 直接手动输入新的代码，即使它不在当前内置字典里也可以保存。
+3. 新代码首次输入后，会自动写入 portfolio/custom_tickers.json；下次打开页面时，它会直接出现在候选列表里。
+4. 公开交易所全量清单会写入 portfolio/exchange_tickers.json，用于自动识别名称和交易所来源；为避免页面变慢，这部分默认不全部展开到下拉候选里，直接输入完整代码即可识别。
 
 如果代码命中内置字典，页面会显示：
 
@@ -125,6 +129,28 @@ cd '/Users/guolishuo/Desktop/美股交易 stocks'
 2. 所属分类，例如半导体、网络安全、指数 ETF。
 
 若备注为空，系统会自动把分类填入备注；如果你已经手工改过备注，系统不会强制覆盖。
+
+### 补充：一次性导入公开交易所清单
+
+如果你想刷新本地的公开交易所代码库，执行：
+
+```bash
+cd '/Users/guolishuo/Desktop/美股交易 stocks'
+.venv/bin/python -m portfolio.exchange_tickers
+```
+
+执行后会发生三件事：
+
+1. 从 Nasdaq Trader 官方公开目录拉取 NASDAQ 和 other listed 两份清单。
+2. 清洗测试代码、权证、rights、units 等不适合作为常规持仓录入的条目。
+3. 将结果写入 portfolio/exchange_tickers.json。
+
+导入完成后，重启 Streamlit 即可生效：
+
+```bash
+cd '/Users/guolishuo/Desktop/美股交易 stocks'
+.venv/bin/python -m streamlit run app.py --server.port 8501
+```
 
 ### 6.3 左侧栏：账户资金参数
 

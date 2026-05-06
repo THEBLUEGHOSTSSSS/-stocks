@@ -31,6 +31,16 @@ _EASTMONEY_STATIC_QUOTE_IDS = {
 }
 
 
+def _normalize_ticker_key(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _tag_history_frame(frame: pd.DataFrame, ticker: str, price_source: str) -> pd.DataFrame:
+    frame.attrs["ticker"] = _normalize_ticker_key(ticker)
+    frame.attrs["price_source"] = price_source
+    return frame
+
+
 def _summarize_exception(exc: Exception) -> str:
     message = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
     if len(message) > 180:
@@ -256,8 +266,7 @@ def _fetch_eastmoney_history(
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
 
     normalized = _normalize_history_frame(frame)
-    normalized.attrs["price_source"] = "eastmoney.history"
-    return normalized
+    return _tag_history_frame(normalized, ticker, "eastmoney.history")
 
 
 def _fetch_eastmoney_realtime_quote(ticker: str) -> dict[str, Any]:
@@ -311,23 +320,23 @@ def get_history(
     interval: str = "1d",
     auto_adjust: bool = True,
 ) -> pd.DataFrame:
+    normalized_ticker = _normalize_ticker_key(ticker)
     primary_error: Exception | None = None
     try:
-        history = yf.Ticker(ticker).history(
+        history = yf.Ticker(normalized_ticker).history(
             period=period,
             interval=interval,
             auto_adjust=auto_adjust,
         )
         normalized = _normalize_history_frame(history)
         if not normalized.empty:
-            normalized.attrs["price_source"] = "yfinance.history"
-            return normalized
+            return _tag_history_frame(normalized, normalized_ticker, "yfinance.history")
         primary_error = RuntimeError("海外源返回空数据")
     except Exception as exc:
         primary_error = exc
 
     try:
-        fallback = _fetch_eastmoney_history(ticker, period=period, interval=interval, auto_adjust=auto_adjust)
+        fallback = _fetch_eastmoney_history(normalized_ticker, period=period, interval=interval, auto_adjust=auto_adjust)
         if not fallback.empty:
             register_fetch_notice("历史行情", "部分海外历史行情不可达，已自动切换到东方财富数据源。")
             return fallback
@@ -336,9 +345,9 @@ def get_history(
         fallback_error = exc
 
     if primary_error is not None:
-        register_fetch_warning("历史行情", ticker, primary_error)
+        register_fetch_warning("历史行情", normalized_ticker, primary_error)
     if fallback_error is not None:
-        register_fetch_warning("历史行情回退", ticker, fallback_error, provider="东方财富")
+        register_fetch_warning("历史行情回退", normalized_ticker, fallback_error, provider="东方财富")
     return pd.DataFrame()
 
 
@@ -348,7 +357,7 @@ def batch_history(
     interval: str = "1d",
     auto_adjust: bool = True,
 ) -> dict[str, pd.DataFrame]:
-    unique_tickers = list(dict.fromkeys(tickers))
+    unique_tickers = list(dict.fromkeys(_normalize_ticker_key(ticker) for ticker in tickers if _normalize_ticker_key(ticker)))
     if not unique_tickers:
         return {}
 
@@ -371,8 +380,7 @@ def batch_history(
         if not isinstance(raw.columns, pd.MultiIndex):
             if len(unique_tickers) == 1:
                 normalized = _normalize_history_frame(raw)
-                normalized.attrs["price_source"] = "yfinance.history"
-                frames[unique_tickers[0]] = normalized
+                frames[unique_tickers[0]] = _tag_history_frame(normalized, unique_tickers[0], "yfinance.history")
             else:
                 for ticker in unique_tickers:
                     frames[ticker] = pd.DataFrame()
@@ -384,7 +392,7 @@ def batch_history(
                 frame = raw[ticker].copy()
                 normalized = _normalize_history_frame(frame)
                 if not normalized.empty:
-                    normalized.attrs["price_source"] = "yfinance.history"
+                    normalized = _tag_history_frame(normalized, ticker, "yfinance.history")
                 frames[ticker] = normalized
 
     for ticker in unique_tickers:
@@ -516,7 +524,8 @@ def _market_session_label(market_state: str | None) -> str:
 
 
 def get_market_session_quote(ticker: str) -> dict[str, Any]:
-    ticker_obj = yf.Ticker(ticker)
+    normalized_ticker = _normalize_ticker_key(ticker)
+    ticker_obj = yf.Ticker(normalized_ticker)
     info: dict[str, Any] = {}
     primary_errors: list[Exception] = []
     try:
@@ -544,6 +553,12 @@ def get_market_session_quote(ticker: str) -> dict[str, Any]:
     post_market_price = _safe_float(info.get("postMarketPrice"))
     market_state = str(info.get("marketState") or "").upper()
     session_label = _market_session_label(market_state)
+    source_ticker = _normalize_ticker_key(
+        info.get("symbol")
+        or info.get("underlyingSymbol")
+        or fast_info.get("symbol")
+        or normalized_ticker
+    )
 
     if session_label == "盘前" and pre_market_price is not None:
         active_price = pre_market_price
@@ -568,22 +583,22 @@ def get_market_session_quote(ticker: str) -> dict[str, Any]:
         ]
     ):
         try:
-            fallback_quote = _fetch_eastmoney_realtime_quote(ticker)
+            fallback_quote = _fetch_eastmoney_realtime_quote(normalized_ticker)
         except Exception as exc:
             fallback_quote = {}
-            register_fetch_warning("实时快照回退", ticker, exc, provider="东方财富")
+            register_fetch_warning("实时快照回退", normalized_ticker, exc, provider="东方财富")
         if fallback_quote:
             register_fetch_notice("实时快照", "部分海外实时行情不可达，已自动切换到东方财富数据源。")
             return fallback_quote
         price_source = "unavailable"
         if primary_errors:
-            register_fetch_warning("实时快照", ticker, primary_errors[0])
+            register_fetch_warning("实时快照", normalized_ticker, primary_errors[0])
         else:
-            register_fetch_warning("实时快照", ticker, RuntimeError("海外源与东方财富均未返回可用快照"))
+            register_fetch_warning("实时快照", normalized_ticker, RuntimeError("海外源与东方财富均未返回可用快照"))
 
     fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return {
-        "ticker": ticker,
+        "ticker": source_ticker,
         "close": active_price,
         "reference_price": active_price,
         "regular_market_price": regular_market_price,
@@ -601,11 +616,12 @@ def get_market_session_quote(ticker: str) -> dict[str, Any]:
 
 
 def get_latest_quote(ticker: str) -> dict[str, Any]:
-    history = get_history(ticker, period="10d", interval="1d")
+    normalized_ticker = _normalize_ticker_key(ticker)
+    history = get_history(normalized_ticker, period="10d", interval="1d")
     if history.empty:
-        session_quote = get_market_session_quote(ticker)
+        session_quote = get_market_session_quote(normalized_ticker)
         return {
-            "ticker": ticker,
+            "ticker": session_quote.get("ticker") or normalized_ticker,
             "close": session_quote.get("close"),
             "previous_close": session_quote.get("previous_close"),
             "change_pct": session_quote.get("change_pct"),
@@ -624,7 +640,7 @@ def get_latest_quote(ticker: str) -> dict[str, Any]:
     as_of_value = history.index[-1]
     as_of = as_of_value.strftime("%Y-%m-%d") if isinstance(as_of_value, datetime) else str(as_of_value)
     return {
-        "ticker": ticker,
+        "ticker": normalized_ticker,
         "close": close,
         "open": float(latest.get("open", close)),
         "high": float(latest.get("high", close)),

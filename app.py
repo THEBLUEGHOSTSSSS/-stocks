@@ -13,6 +13,7 @@ from config import (
     AAOX_UNDERLYING,
     ACCOUNT_FILE,
     CACHE_TTL_SECONDS,
+    CUSTOM_TICKERS_FILE,
     DEFAULT_LONG_TARGET_PCT,
     CORE_SIGNAL_TICKERS,
     DEFAULT_KELLY_FRACTION,
@@ -48,12 +49,14 @@ from models.kelly import continuous_kelly
 from models.regime import classify_market_regime, detect_breakdown_signal, detect_sigma_event
 from models.signals import calculate_rolling_alpha, build_candidate_trade_profile, build_trade_profile, should_force_observe
 from portfolio.account import compute_account_overview, compute_short_margin_profile, load_account_state, save_account_state
+from portfolio.custom_tickers import load_custom_ticker_metadata, normalize_ticker_symbol, register_custom_ticker
 from portfolio.holdings import (
     build_holdings_change_records,
     build_holdings_history_summary,
     build_snapshot_order_action_records,
     enrich_holdings_with_quotes,
     frame_to_holdings,
+    holdings_signature,
     load_holdings,
     load_holdings_history,
     resolve_reference_snapshot,
@@ -129,6 +132,32 @@ def _format_regime_label(label: Any) -> str:
     return REGIME_BILINGUAL_LABELS.get(normalized, normalized)
 
 
+def _ensure_custom_ticker_registry_loaded() -> None:
+    if "custom_ticker_metadata" not in st.session_state:
+        st.session_state["custom_ticker_metadata"] = load_custom_ticker_metadata(CUSTOM_TICKERS_FILE)
+
+
+def _runtime_ticker_metadata() -> dict[str, dict[str, str]]:
+    _ensure_custom_ticker_registry_loaded()
+    custom_metadata = st.session_state.get("custom_ticker_metadata")
+    if not isinstance(custom_metadata, dict):
+        custom_metadata = {}
+    return {**TICKER_METADATA, **custom_metadata}
+
+
+def _runtime_ticker_suggestion_universe(extra_tickers: list[str] | None = None) -> list[str]:
+    suggestion_values = set(TICKER_SUGGESTION_UNIVERSE)
+    _ensure_custom_ticker_registry_loaded()
+    custom_metadata = st.session_state.get("custom_ticker_metadata")
+    if isinstance(custom_metadata, dict):
+        suggestion_values.update(custom_metadata.keys())
+    for ticker in extra_tickers or []:
+        normalized = normalize_ticker_symbol(ticker)
+        if normalized:
+            suggestion_values.add(normalized)
+    return sorted(suggestion_values)
+
+
 def _format_factor_set_label(label: Any) -> str:
     normalized = str(label or "").strip()
     if not normalized:
@@ -145,7 +174,8 @@ def _format_factor_set_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _ticker_meta(ticker: str) -> dict[str, str]:
-    return TICKER_METADATA.get(ticker.upper().strip(), {})
+    normalized = normalize_ticker_symbol(ticker)
+    return _runtime_ticker_metadata().get(normalized, {}) if normalized else {}
 
 
 def _format_ticker_option(ticker: str) -> str:
@@ -186,6 +216,8 @@ def _editor_rows_from_holdings(rows: list[dict[str, Any]]) -> list[dict[str, Any
 def _ensure_holding_editor_rows(saved_rows: list[dict[str, Any]]) -> None:
     if "holding_editor_rows" not in st.session_state:
         st.session_state["holding_editor_rows"] = _editor_rows_from_holdings(saved_rows)
+    if "holding_editor_base_signature" not in st.session_state:
+        st.session_state["holding_editor_base_signature"] = holdings_signature(st.session_state.get("holding_editor_rows", []))
 
 
 def _collect_sidebar_holdings() -> list[dict[str, Any]]:
@@ -206,6 +238,7 @@ def _collect_sidebar_holdings() -> list[dict[str, Any]]:
 
 def _reset_holding_editor(rows: list[dict[str, Any]]) -> None:
     st.session_state["holding_editor_rows"] = _editor_rows_from_holdings(rows)
+    st.session_state["holding_editor_base_signature"] = holdings_signature(rows)
 
 
 def _render_sidebar_holding_editor(saved_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -221,7 +254,7 @@ def _render_sidebar_holding_editor(saved_rows: list[dict[str, Any]]) -> list[dic
             _reset_holding_editor(saved_rows)
             st.rerun()
 
-    st.caption("代码框支持直接输入字母搜索候选代码，也支持手动输入未收录的新代码。")
+    st.caption("代码框默认搜索精选候选；公开交易所清单内代码可直接输入后自动识别，未收录的新代码首次输入后会自动加入本地候选库。")
 
     for index, row in enumerate(st.session_state.get("holding_editor_rows", []), start=1):
         row_id = row["id"]
@@ -243,11 +276,12 @@ def _render_sidebar_holding_editor(saved_rows: list[dict[str, Any]]) -> list[dic
             st.markdown(f"**持仓 {index}**")
             top_left, top_mid, top_right = st.columns([1.5, 1.0, 1.0])
             with top_left:
-                current_ticker = str(st.session_state.get(ticker_key, row.get("ticker", "")) or "").upper().strip()
-                current_index = TICKER_SUGGESTION_UNIVERSE.index(current_ticker) if current_ticker in TICKER_SUGGESTION_UNIVERSE else None
+                current_ticker = normalize_ticker_symbol(st.session_state.get(ticker_key, row.get("ticker", "")))
+                ticker_options = _runtime_ticker_suggestion_universe([current_ticker])
+                current_index = ticker_options.index(current_ticker) if current_ticker in ticker_options else None
                 ticker_value = st.selectbox(
                     "代码",
-                    options=TICKER_SUGGESTION_UNIVERSE,
+                    options=ticker_options,
                     index=current_index,
                     format_func=_format_ticker_option,
                     placeholder="输入代码，例如 NVDA",
@@ -255,7 +289,9 @@ def _render_sidebar_holding_editor(saved_rows: list[dict[str, Any]]) -> list[dic
                     accept_new_options=True,
                     filter_mode="fuzzy",
                 )
-                normalized_ticker = str(ticker_value or "").upper().strip()
+                normalized_ticker = normalize_ticker_symbol(ticker_value)
+                if normalized_ticker and normalized_ticker not in _runtime_ticker_metadata():
+                    st.session_state["custom_ticker_metadata"] = register_custom_ticker(CUSTOM_TICKERS_FILE, normalized_ticker)
                 meta = _ticker_meta(normalized_ticker)
                 previous_auto_note = st.session_state.get(auto_note_key, "")
                 current_note = st.session_state.get(note_key, "")
@@ -268,7 +304,7 @@ def _render_sidebar_holding_editor(saved_rows: list[dict[str, Any]]) -> list[dic
                 if meta:
                     st.caption(f"自动识别：{meta.get('name', normalized_ticker)} | {meta.get('category', '未分类')}")
                 else:
-                    st.caption("自动识别：未收录，仍可保存并参与行情分析")
+                    st.caption("自动识别：未命中官方清单或本地库，仍可保存并参与行情分析")
             with top_mid:
                 st.selectbox(
                     "方向",
@@ -803,8 +839,12 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def _history_to_quote(history: pd.DataFrame, ticker: str) -> dict[str, Any]:
+    normalized_ticker = str(ticker or "").strip().upper()
+    history_ticker = str(history.attrs.get("ticker") or "").strip().upper() if isinstance(history, pd.DataFrame) else ""
+    if history_ticker and history_ticker != normalized_ticker:
+        raise AssertionError(f"history_ticker_mismatch:{normalized_ticker}->{history_ticker}")
     if history.empty:
-        return get_latest_quote(ticker)
+        return get_latest_quote(normalized_ticker)
 
     latest = history.iloc[-1]
     previous = history.iloc[-2] if len(history) > 1 else latest
@@ -812,7 +852,7 @@ def _history_to_quote(history: pd.DataFrame, ticker: str) -> dict[str, Any]:
     close = float(latest.get("close", previous_close))
     change_pct = ((close / previous_close) - 1.0) * 100.0 if previous_close else None
     return {
-        "ticker": ticker,
+        "ticker": normalized_ticker,
         "close": close,
         "open": float(latest.get("open", close)),
         "high": float(latest.get("high", close)),
@@ -822,6 +862,43 @@ def _history_to_quote(history: pd.DataFrame, ticker: str) -> dict[str, Any]:
         "change_pct": change_pct,
         "as_of": str(history.index[-1].date()) if isinstance(history.index, pd.DatetimeIndex) else None,
     }
+
+
+def _safe_quote_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_validated_quote_snapshot(history: pd.DataFrame, ticker: str) -> dict[str, Any]:
+    normalized_ticker = str(ticker or "").strip().upper()
+    history_quote = _history_to_quote(history, normalized_ticker)
+    session_quote = get_market_session_quote(normalized_ticker)
+    session_ticker = str(session_quote.get("ticker") or normalized_ticker).strip().upper()
+    if session_ticker != normalized_ticker:
+        raise AssertionError(f"session_ticker_mismatch:{normalized_ticker}->{session_ticker}")
+
+    history_close = _safe_quote_float(history_quote.get("close"))
+    session_close = _safe_quote_float(session_quote.get("close"))
+    merged = dict(history_quote)
+    for key, value in session_quote.items():
+        if key in {"ticker", "close", "previous_close", "change_pct"}:
+            continue
+        merged[key] = value
+
+    merged["ticker"] = normalized_ticker
+    merged["close"] = history_close if history_close is not None else session_close
+    merged["market_price"] = session_close if session_close is not None else merged.get("close")
+    merged["session_price"] = session_close
+    merged["reference_price"] = session_quote.get("reference_price") or merged.get("market_price") or merged.get("close")
+    if merged.get("previous_close") is None:
+        merged["previous_close"] = session_quote.get("previous_close")
+    if merged.get("change_pct") is None:
+        merged["change_pct"] = session_quote.get("change_pct")
+    return merged
 
 
 def _rolling_alpha_from_history(history: pd.DataFrame, benchmark_history: pd.DataFrame) -> float:
@@ -1590,10 +1667,7 @@ def run_analysis_pipeline(holding_tickers: tuple[str, ...], kelly_fraction: floa
     quote_map: dict[str, dict[str, Any]] = {}
     for ticker in tracked_tickers:
         history = histories.get(ticker, pd.DataFrame())
-        quote_map[ticker] = {
-            **_history_to_quote(history, ticker),
-            **get_market_session_quote(ticker),
-        }
+        quote_map[ticker] = _build_validated_quote_snapshot(history, ticker)
 
     return {
         "as_of": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -1630,11 +1704,20 @@ with st.sidebar:
     st.subheader("持仓录入")
     current_editor_holdings = _render_sidebar_holding_editor(saved_holdings)
     if st.button("保存持仓", use_container_width=True):
-        normalized = save_holdings(current_editor_holdings, HOLDINGS_FILE)
-        save_holdings_snapshot(normalized, HOLDINGS_HISTORY_FILE, source="manual_save")
-        saved_holdings_history = load_holdings_history(HOLDINGS_HISTORY_FILE)
-        st.session_state["saved_holdings"] = normalized
-        st.success("持仓已保存，并记录历史快照")
+        latest_saved_holdings = load_holdings(HOLDINGS_FILE)
+        latest_saved_signature = holdings_signature(latest_saved_holdings)
+        editor_base_signature = str(st.session_state.get("holding_editor_base_signature") or holdings_signature(saved_holdings))
+        current_editor_signature = holdings_signature(current_editor_holdings)
+
+        if editor_base_signature != latest_saved_signature and current_editor_signature != latest_saved_signature:
+            st.error("当前页面的持仓编辑器不是基于最新已保存版本，已阻止覆盖保存。请先点“重置为已保存”加载最新持仓后再编辑。")
+        else:
+            normalized = save_holdings(current_editor_holdings, HOLDINGS_FILE)
+            save_holdings_snapshot(normalized, HOLDINGS_HISTORY_FILE, source="manual_save")
+            saved_holdings_history = load_holdings_history(HOLDINGS_HISTORY_FILE)
+            st.session_state["saved_holdings"] = normalized
+            st.session_state["holding_editor_base_signature"] = holdings_signature(normalized)
+            st.success("持仓已保存，并记录历史快照")
 
     st.caption("持仓会保存到 portfolio/holdings.json；每次保存或运行分析都会自动记录历史快照。")
 

@@ -47,6 +47,10 @@ def normalize_holdings(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return normalized
 
 
+def holdings_signature(rows: list[dict[str, Any]]) -> str:
+    return _holdings_signature(rows)
+
+
 def _holdings_signature(rows: list[dict[str, Any]]) -> str:
     normalized = normalize_holdings(rows)
     ordered = sorted(
@@ -320,7 +324,11 @@ def enrich_holdings_with_quotes(
     enriched: list[dict[str, Any]] = []
     for holding in holdings:
         quote = quotes.get(holding["ticker"], {})
-        market_price = quote.get("close")
+        holding_ticker = str(holding.get("ticker") or "").strip().upper()
+        quote_ticker = str(quote.get("ticker") or holding_ticker).strip().upper()
+        if quote and quote_ticker != holding_ticker:
+            raise AssertionError(f"holding_quote_ticker_mismatch:{holding_ticker}->{quote_ticker}")
+        market_price = quote.get("market_price", quote.get("close"))
         shares = float(holding["shares"])
         cost_basis = float(holding["cost_basis"])
         side = str(holding.get("side") or "LONG").upper()
