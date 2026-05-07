@@ -203,12 +203,23 @@ def resolve_reference_snapshot(
     return None
 
 
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def build_holdings_change_records(
     current_rows: list[dict[str, Any]],
     previous_rows: list[dict[str, Any]],
+    quotes: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     current_map = _aggregate_holdings(current_rows)
     previous_map = _aggregate_holdings(previous_rows)
+    quote_map = quotes or {}
     records: list[dict[str, Any]] = []
 
     for ticker in sorted(set(current_map) | set(previous_map)):
@@ -223,6 +234,10 @@ def build_holdings_change_records(
         previous_cost_basis = float((previous or {}).get("cost_basis") or 0.0) if previous else None
         current_notes = str((current or {}).get("notes") or "") if current else ""
         previous_notes = str((previous or {}).get("notes") or "") if previous else ""
+        quote = quote_map.get(ticker, {})
+        market_price = _safe_float(quote.get("market_price", quote.get("close")))
+        pre_market_price = _safe_float(quote.get("pre_market_price"))
+        post_market_price = _safe_float(quote.get("post_market_price"))
 
         if previous is None:
             status = "新增"
@@ -239,6 +254,30 @@ def build_holdings_change_records(
         else:
             status = "未变化"
 
+        closed_shares: float | None = None
+        realized_pnl: float | None = None
+        closeout_result: str | None = None
+        if previous is not None and previous_side in {"LONG", "SHORT"}:
+            if current is None:
+                closed_shares = previous_shares
+            elif current_side != previous_side:
+                closed_shares = previous_shares
+            elif share_delta < -1e-9:
+                closed_shares = abs(share_delta)
+
+        if closed_shares is not None and closed_shares <= 1e-9:
+            closed_shares = None
+
+        if closed_shares is not None and market_price is not None and previous_cost_basis is not None:
+            direction = 1.0 if previous_side == "LONG" else -1.0
+            realized_pnl = (market_price - previous_cost_basis) * closed_shares * direction
+            if realized_pnl > 1e-9:
+                closeout_result = "获利了结"
+            elif realized_pnl < -1e-9:
+                closeout_result = "止损了结"
+            else:
+                closeout_result = "平本了结"
+
         records.append(
             {
                 "ticker": ticker,
@@ -250,6 +289,12 @@ def build_holdings_change_records(
                 "share_delta": share_delta,
                 "previous_cost_basis": previous_cost_basis,
                 "current_cost_basis": current_cost_basis,
+                "market_price": market_price,
+                "pre_market_price": pre_market_price,
+                "post_market_price": post_market_price,
+                "closed_shares": closed_shares,
+                "realized_pnl": realized_pnl,
+                "closeout_result": closeout_result,
                 "previous_notes": previous_notes,
                 "current_notes": current_notes,
             }
@@ -329,6 +374,9 @@ def enrich_holdings_with_quotes(
         if quote and quote_ticker != holding_ticker:
             raise AssertionError(f"holding_quote_ticker_mismatch:{holding_ticker}->{quote_ticker}")
         market_price = quote.get("market_price", quote.get("close"))
+        latest_close = quote.get("close")
+        pre_market_price = quote.get("pre_market_price")
+        post_market_price = quote.get("post_market_price")
         shares = float(holding["shares"])
         cost_basis = float(holding["cost_basis"])
         side = str(holding.get("side") or "LONG").upper()
@@ -342,6 +390,9 @@ def enrich_holdings_with_quotes(
             {
                 **holding,
                 "market_price": market_price,
+                "latest_close": latest_close,
+                "pre_market_price": pre_market_price,
+                "post_market_price": post_market_price,
                 "market_value": market_value,
                 "net_exposure": net_exposure,
                 "cost_value": cost_value,

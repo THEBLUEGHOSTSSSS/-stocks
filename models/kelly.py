@@ -28,6 +28,7 @@ def continuous_kelly(
             "total_exposure": 0.0,
             "covariance": pd.DataFrame(),
             "volatility_scalars": {},
+            "edge_relief_factors": {},
             "asset_volatility": {},
         }
 
@@ -38,6 +39,7 @@ def continuous_kelly(
             "total_exposure": 0.0,
             "covariance": pd.DataFrame(),
             "volatility_scalars": {},
+            "edge_relief_factors": {},
             "asset_volatility": {},
         }
 
@@ -48,6 +50,7 @@ def continuous_kelly(
             "total_exposure": 0.0,
             "covariance": pd.DataFrame(),
             "volatility_scalars": {},
+            "edge_relief_factors": {},
             "asset_volatility": {},
         }
 
@@ -63,6 +66,7 @@ def continuous_kelly(
     fallback_volatility = aligned_returns.std(ddof=0) * np.sqrt(TRADING_DAYS_PER_YEAR)
     resolved_asset_volatility: dict[str, float] = {}
     volatility_scalars: dict[str, float] = {}
+    edge_relief_factors: dict[str, float] = {}
     for column in columns:
         raw_volatility = (asset_volatility or {}).get(column)
         try:
@@ -73,9 +77,16 @@ def continuous_kelly(
             resolved_volatility = float(fallback_volatility.get(column, np.nan))
         if not np.isfinite(resolved_volatility) or resolved_volatility <= 0.0:
             volatility_scalars[column] = 1.0
+            edge_relief_factors[column] = 0.0
             continue
         resolved_asset_volatility[column] = resolved_volatility
-        volatility_scalars[column] = float(np.clip(0.35 / resolved_volatility, 0.35, 1.0))
+        base_scalar = float(np.clip(0.35 / resolved_volatility, 0.35, 1.0))
+        expected_edge = max(float(expected_returns.get(column) or 0.0), 0.0)
+        edge_relief = float(np.clip((expected_edge - 0.003) / 0.009, 0.0, 1.0))
+        high_volatility_intensity = float(np.clip((resolved_volatility - 0.35) / 0.55, 0.0, 1.0))
+        relief_multiplier = 1.0 + 0.65 * edge_relief * high_volatility_intensity
+        volatility_scalars[column] = float(np.clip(base_scalar * relief_multiplier, base_scalar, 0.9))
+        edge_relief_factors[column] = edge_relief
 
     scaled_weights = scaled_weights * np.array([volatility_scalars.get(column, 1.0) for column in columns], dtype=float)
 
@@ -90,5 +101,6 @@ def continuous_kelly(
         "total_exposure": total_exposure,
         "covariance": covariance,
         "volatility_scalars": volatility_scalars,
+        "edge_relief_factors": edge_relief_factors,
         "asset_volatility": resolved_asset_volatility,
     }

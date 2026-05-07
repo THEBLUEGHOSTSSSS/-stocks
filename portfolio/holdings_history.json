@@ -642,5 +642,1118 @@
         "notes": "交易所导入/NASDAQ"
       }
     ]
+  },
+  {
+    "captured_at": "2026-05-06 14:11:24",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 30.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 30.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-05-07 14:18:05",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 3.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 20.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 20.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 3.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-05-07 14:18:27",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 30.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 169.43, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"MRVL\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 30.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MRVL",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 169.43,
+        "notes": "交易所导入/NASDAQ"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-05-07 14:19:02",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 30.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 13.245, \"notes\": \"交易所导入/NYSE\", \"shares\": 50.0, \"side\": \"LONG\", \"ticker\": \"NOK\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 30.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NOK",
+        "side": "LONG",
+        "shares": 50.0,
+        "cost_basis": 13.245,
+        "notes": "交易所导入/NYSE"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-05-07 14:24:05",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 30.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 3.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 13.245, \"notes\": \"交易所导入/NYSE\", \"shares\": 50.0, \"side\": \"LONG\", \"ticker\": \"NOK\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 30.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 3.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NOK",
+        "side": "LONG",
+        "shares": 50.0,
+        "cost_basis": 13.245,
+        "notes": "交易所导入/NYSE"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-05-07 14:25:09",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 30.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 3.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 13.245, \"notes\": \"交易所导入/NYSE\", \"shares\": 50.0, \"side\": \"LONG\", \"ticker\": \"NOK\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 20.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 20.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 30.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 3.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NOK",
+        "side": "LONG",
+        "shares": 50.0,
+        "cost_basis": 13.245,
+        "notes": "交易所导入/NYSE"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-05-07 14:25:47",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 3.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 13.245, \"notes\": \"交易所导入/NYSE\", \"shares\": 50.0, \"side\": \"LONG\", \"ticker\": \"NOK\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 20.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 20.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 3.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NOK",
+        "side": "LONG",
+        "shares": 50.0,
+        "cost_basis": 13.245,
+        "notes": "交易所导入/NYSE"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-05-07 15:48:18",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 30.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 169.43, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"MRVL\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 81.16, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"RKLB\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}, {\"cost_basis\": 161.26, \"notes\": \"交易所导入/NYSE Arca ETF\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"SOXL\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 30.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "RKLB",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 81.16,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MRVL",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 169.43,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "SOXL",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 161.26,
+        "notes": "交易所导入/NYSE Arca ETF"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-05-07 15:55:17",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 30.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 169.43, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"MRVL\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 13.245, \"notes\": \"交易所导入/NYSE\", \"shares\": 50.0, \"side\": \"LONG\", \"ticker\": \"NOK\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 81.16, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"RKLB\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}, {\"cost_basis\": 161.26, \"notes\": \"交易所导入/NYSE Arca ETF\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"SOXL\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 30.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MRVL",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 169.43,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "RKLB",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 81.16,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "SOXL",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 161.26,
+        "notes": "交易所导入/NYSE Arca ETF"
+      },
+      {
+        "ticker": "NOK",
+        "side": "LONG",
+        "shares": 50.0,
+        "cost_basis": 13.245,
+        "notes": "交易所导入/NYSE"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-05-07 15:56:09",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 169.43, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"MRVL\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 3.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 13.245, \"notes\": \"交易所导入/NYSE\", \"shares\": 50.0, \"side\": \"LONG\", \"ticker\": \"NOK\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 81.16, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"RKLB\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 20.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}, {\"cost_basis\": 161.26, \"notes\": \"交易所导入/NYSE Arca ETF\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"SOXL\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 20.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 3.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MRVL",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 169.43,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "RKLB",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 81.16,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "SOXL",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 161.26,
+        "notes": "交易所导入/NYSE Arca ETF"
+      },
+      {
+        "ticker": "NOK",
+        "side": "LONG",
+        "shares": 50.0,
+        "cost_basis": 13.245,
+        "notes": "交易所导入/NYSE"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-05-07 15:58:11",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 169.43, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"MRVL\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 3.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 13.245, \"notes\": \"交易所导入/NYSE\", \"shares\": 50.0, \"side\": \"LONG\", \"ticker\": \"NOK\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 81.16, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"RKLB\"}, {\"cost_basis\": 81.16, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"RKLB\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 20.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 20.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 3.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MRVL",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 169.43,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "RKLB",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 81.16,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NOK",
+        "side": "LONG",
+        "shares": 50.0,
+        "cost_basis": 13.245,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "RKLB",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 81.16,
+        "notes": "交易所导入/NASDAQ"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-05-07 16:06:31",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 169.43, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"MRVL\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 3.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 13.245, \"notes\": \"交易所导入/NYSE\", \"shares\": 50.0, \"side\": \"LONG\", \"ticker\": \"NOK\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 81.16, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"RKLB\"}, {\"cost_basis\": 81.16, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"RKLB\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 20.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}, {\"cost_basis\": 161.26, \"notes\": \"交易所导入/NYSE Arca ETF\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"SOXL\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 20.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 3.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MRVL",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 169.43,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "RKLB",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 81.16,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NOK",
+        "side": "LONG",
+        "shares": 50.0,
+        "cost_basis": 13.245,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "RKLB",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 81.16,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "SOXL",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 161.26,
+        "notes": "交易所导入/NYSE Arca ETF"
+      }
+    ]
+  },
+  {
+    "captured_at": "2026-05-07 16:07:51",
+    "source": "manual_save",
+    "signature": "[{\"cost_basis\": 5.61, \"notes\": \"交易所导入/NYSE\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ACHR\"}, {\"cost_basis\": 4.979, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 40.0, \"side\": \"LONG\", \"ticker\": \"ASPI\"}, {\"cost_basis\": 8.53, \"notes\": \"交易所导入/NYSE\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"JOBY\"}, {\"cost_basis\": 169.43, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"MRVL\"}, {\"cost_basis\": 640.96, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 3.0, \"side\": \"LONG\", \"ticker\": \"MU\"}, {\"cost_basis\": 22.31, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 2.0, \"side\": \"LONG\", \"ticker\": \"NNE\"}, {\"cost_basis\": 13.245, \"notes\": \"交易所导入/NYSE\", \"shares\": 50.0, \"side\": \"LONG\", \"ticker\": \"NOK\"}, {\"cost_basis\": 171.611, \"notes\": \"半导体/AI算力\", \"shares\": 6.0, \"side\": \"LONG\", \"ticker\": \"NVDA\"}, {\"cost_basis\": 64.01, \"notes\": \"交易所导入/NYSE\", \"shares\": 4.0, \"side\": \"LONG\", \"ticker\": \"OKLO\"}, {\"cost_basis\": 576.03, \"notes\": \"科技成长指数ETF\", \"shares\": 1.0, \"side\": \"LONG\", \"ticker\": \"QQQ\"}, {\"cost_basis\": 81.16, \"notes\": \"交易所导入/NASDAQ\", \"shares\": 10.0, \"side\": \"LONG\", \"ticker\": \"RKLB\"}, {\"cost_basis\": 11.125, \"notes\": \"交易所导入/NYSE\", \"shares\": 20.0, \"side\": \"LONG\", \"ticker\": \"SMR\"}, {\"cost_basis\": 161.26, \"notes\": \"交易所导入/NYSE Arca ETF\", \"shares\": 5.0, \"side\": \"LONG\", \"ticker\": \"SOXL\"}]",
+    "holdings": [
+      {
+        "ticker": "NVDA",
+        "side": "LONG",
+        "shares": 6.0,
+        "cost_basis": 171.611,
+        "notes": "半导体/AI算力"
+      },
+      {
+        "ticker": "QQQ",
+        "side": "LONG",
+        "shares": 1.0,
+        "cost_basis": 576.03,
+        "notes": "科技成长指数ETF"
+      },
+      {
+        "ticker": "SMR",
+        "side": "LONG",
+        "shares": 20.0,
+        "cost_basis": 11.125,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "OKLO",
+        "side": "LONG",
+        "shares": 4.0,
+        "cost_basis": 64.01,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "JOBY",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 8.53,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ACHR",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 5.61,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "ASPI",
+        "side": "LONG",
+        "shares": 40.0,
+        "cost_basis": 4.979,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NNE",
+        "side": "LONG",
+        "shares": 2.0,
+        "cost_basis": 22.31,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MU",
+        "side": "LONG",
+        "shares": 3.0,
+        "cost_basis": 640.96,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "MRVL",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 169.43,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "RKLB",
+        "side": "LONG",
+        "shares": 10.0,
+        "cost_basis": 81.16,
+        "notes": "交易所导入/NASDAQ"
+      },
+      {
+        "ticker": "NOK",
+        "side": "LONG",
+        "shares": 50.0,
+        "cost_basis": 13.245,
+        "notes": "交易所导入/NYSE"
+      },
+      {
+        "ticker": "SOXL",
+        "side": "LONG",
+        "shares": 5.0,
+        "cost_basis": 161.26,
+        "notes": "交易所导入/NYSE Arca ETF"
+      }
+    ]
   }
 ]

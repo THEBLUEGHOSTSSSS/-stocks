@@ -85,6 +85,20 @@ def _assess_momentum_rsi_filter(
     # Orthogonalize RSI away from trend alpha: RSI never adds positive EV.
     # It only gates whether already-valid intermediate momentum may pass through the model.
     if medium_quality and rsi_14 > 70.0:
+        if high_quality and rsi_14 <= 76.0:
+            return {
+                "release_multiplier": 0.38,
+                "reversal_penalty": -(0.012 + 0.008 * float(np.clip((rsi_14 - 70.0) / 6.0, 0.0, 1.0))),
+                "blowoff_top_block": False,
+                "state": "high_quality_overheat_release",
+            }
+        if rsi_14 <= 74.0:
+            return {
+                "release_multiplier": 0.18,
+                "reversal_penalty": -(0.016 + 0.008 * float(np.clip((rsi_14 - 70.0) / 4.0, 0.0, 1.0))),
+                "blowoff_top_block": False,
+                "state": "cautious_overheat_release",
+            }
         return {
             "release_multiplier": 0.0,
             "reversal_penalty": -(0.035 + 0.01 * float(np.clip((rsi_14 - 70.0) / 10.0, 0.0, 1.0))),
@@ -173,9 +187,10 @@ def detect_exhaustion_reversal(market_features: dict[str, Any]) -> dict[str, Any
     )
     # Blow-off top uses a hard three-factor trigger; extreme volume is a weighted confirmation for distribution.
     upside_blowoff = bool(
-        daily_return_pct >= 5.0
-        and rsi_14 >= 75.0
-        and momentum_term >= 0.95
+        daily_return_pct >= 7.0
+        and rsi_14 >= 78.0
+        and momentum_term >= 0.98
+        and (volume_ratio >= 2.5 or hist_vol_20d >= 0.75)
     )
 
     if downside_capitulation:
@@ -357,9 +372,17 @@ def _assess_volatility_gate(
         }
 
     if hist_vol_20d >= 0.65:
+        if breakout_valid and momentum_term >= 0.85:
+            return {
+                "release_multiplier": 0.55 if regime_label == "Risk-On" else 0.42,
+                "penalty": -0.0035 if regime_label == "Risk-On" else -0.005,
+                "block": False,
+                "state": "high_vol_trend_release",
+                "reason": "高波动但趋势强，缩量放行部分动能",
+            }
         if breakout_valid and regime_label == "Risk-On" and momentum_term >= 0.55:
             return {
-                "release_multiplier": 0.65,
+                "release_multiplier": 0.72,
                 "penalty": -0.004,
                 "block": False,
                 "state": "high_vol_caution",
@@ -824,6 +847,19 @@ def classify_signal_mode(market_features: dict[str, Any]) -> dict[str, str]:
                 "signal_label": "动能延续",
                 "signal_reason": "10日动量强、相对强度同步确认",
             }
+
+    if (
+        breakout
+        and strong_intermediate_trend
+        and volume_ratio >= 1.5
+        and relative_strength >= 0.05
+        and 70.0 < rsi_14 <= 76.0
+    ):
+        return {
+            "signal_mode": "momentum",
+            "signal_label": "强趋势延续",
+            "signal_reason": "突破后进入高热区，但趋势与相对强度仍在延续",
+        }
 
     if (
         not breakout

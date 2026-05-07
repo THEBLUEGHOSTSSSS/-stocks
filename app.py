@@ -220,19 +220,35 @@ def _ensure_holding_editor_rows(saved_rows: list[dict[str, Any]]) -> None:
         st.session_state["holding_editor_base_signature"] = holdings_signature(st.session_state.get("holding_editor_rows", []))
 
 
-def _collect_sidebar_holdings() -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for row in st.session_state.get("holding_editor_rows", []):
-        row_id = row["id"]
-        rows.append(
+def _resolve_holding_editor_rows_from_state(rows: list[dict[str, Any]], state: dict[str, Any]) -> list[dict[str, Any]]:
+    resolved_rows: list[dict[str, Any]] = []
+    for row in rows:
+        row_id = str(row.get("id") or "")
+        resolved_rows.append(
             {
-                "ticker": st.session_state.get(f"holding_ticker_{row_id}", row.get("ticker", "")),
-                "side": st.session_state.get(f"holding_side_{row_id}", str(row.get("side", "LONG") or "LONG")),
-                "shares": st.session_state.get(f"holding_shares_{row_id}", float(row.get("shares", 0.0) or 0.0)),
-                "cost_basis": st.session_state.get(f"holding_cost_{row_id}", float(row.get("cost_basis", 0.0) or 0.0)),
-                "notes": st.session_state.get(f"holding_notes_{row_id}", row.get("notes", "")),
+                **row,
+                "ticker": normalize_ticker_symbol(state.get(f"holding_ticker_{row_id}", row.get("ticker", ""))),
+                "side": str(state.get(f"holding_side_{row_id}", str(row.get("side", "LONG") or "LONG")) or "LONG").upper(),
+                "shares": float(state.get(f"holding_shares_{row_id}", float(row.get("shares", 0.0) or 0.0)) or 0.0),
+                "cost_basis": float(state.get(f"holding_cost_{row_id}", float(row.get("cost_basis", 0.0) or 0.0)) or 0.0),
+                "notes": str(state.get(f"holding_notes_{row_id}", row.get("notes", "")) or ""),
             }
         )
+    return resolved_rows
+
+
+def _sync_holding_editor_rows_from_state() -> None:
+    # Buttons above the editor trigger an immediate rerun; sync current widget values first
+    # so Streamlit's widget cleanup cannot roll recently entered holdings back to stale rows.
+    current_rows = list(st.session_state.get("holding_editor_rows", []))
+    st.session_state["holding_editor_rows"] = _resolve_holding_editor_rows_from_state(current_rows, st.session_state)
+
+
+def _collect_sidebar_holdings() -> list[dict[str, Any]]:
+    rows = _resolve_holding_editor_rows_from_state(
+        list(st.session_state.get("holding_editor_rows", [])),
+        st.session_state,
+    )
     return frame_to_holdings(pd.DataFrame(rows)) if rows else []
 
 
@@ -243,6 +259,7 @@ def _reset_holding_editor(rows: list[dict[str, Any]]) -> None:
 
 def _render_sidebar_holding_editor(saved_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     _ensure_holding_editor_rows(saved_rows)
+    _sync_holding_editor_rows_from_state()
 
     toolbar_left, toolbar_right = st.columns(2)
     with toolbar_left:
@@ -420,6 +437,9 @@ def _display_holdings_frame(
             "cost_basis": "成本价",
             "notes": "备注",
             "market_price": "最新价",
+            "latest_close": "最新收盘价",
+            "pre_market_price": "盘前价",
+            "post_market_price": "盘后价",
             "market_value": "持仓名义金额",
             "net_exposure": "净敞口",
             "cost_value": "成本市值",
@@ -437,6 +457,28 @@ def _display_holdings_frame(
 
 def _snapshot_source_label(source: Any) -> str:
     return HOLDINGS_SNAPSHOT_SOURCE_LABELS.get(str(source or "unknown"), str(source or "未知来源"))
+
+
+def _radar_candidate_priority(candidate: dict[str, Any]) -> tuple[float, float, float, float, float]:
+    breakout_bonus = 1.0 if bool(candidate.get("breakout_valid") or candidate.get("breakdown")) else 0.0
+    expected_return = abs(float(candidate.get("expected_return_5d") or 0.0))
+    target_ev = abs(float(candidate.get("target_ev") or 0.0))
+    predictive_confidence = float(candidate.get("predictive_confidence") or 0.0)
+    signal_strength = abs(float(candidate.get("signal_strength") or 0.0))
+    volume_ratio = float(candidate.get("volume_ratio_20d") or 1.0)
+    hist_vol = max(float(candidate.get("hist_vol_20d") or 0.35), 0.35)
+    eligibility_bonus = 0.12 if bool(candidate.get("eligible_for_risk")) else 0.0
+    normalized_volume = float(min(max(volume_ratio, 1.0), 2.5))
+    high_52w_strength = float(candidate.get("high_52w_strength") or 0.0)
+    event_driven_score = float(candidate.get("event_driven_score") or 0.0)
+    trend_quality = expected_return * (0.7 + 0.3 * predictive_confidence) * normalized_volume / hist_vol
+    return (
+        breakout_bonus,
+        trend_quality + target_ev * 4.0 + 0.08 * high_52w_strength + 0.06 * event_driven_score + eligibility_bonus,
+        signal_strength,
+        predictive_confidence,
+        expected_return,
+    )
 
 
 def _display_holdings_change_frame(change_records: list[dict[str, Any]]) -> pd.DataFrame:
@@ -457,6 +499,12 @@ def _display_holdings_change_frame(change_records: list[dict[str, Any]]) -> pd.D
             "share_delta": "股数变化",
             "previous_cost_basis": "上次成本价",
             "current_cost_basis": "当前成本价",
+            "market_price": "当前最新价",
+            "pre_market_price": "当前盘前价",
+            "post_market_price": "当前盘后价",
+            "closed_shares": "已了结股数",
+            "realized_pnl": "按最新价估算已实现盈亏",
+            "closeout_result": "了结结果",
             "previous_notes": "上次备注",
             "current_notes": "当前备注",
         }
@@ -511,6 +559,8 @@ def _display_account_overview_frame(account_overview: dict[str, Any]) -> pd.Data
         "total_equity",
         "market_funds",
         "total_pnl",
+        "floating_pnl",
+        "realized_pnl",
         "long_market_value",
         "short_market_value",
         "short_margin_used",
@@ -532,7 +582,9 @@ def _display_account_overview_frame(account_overview: dict[str, Any]) -> pd.Data
     field_labels = [
         ("total_equity", "账户总权益"),
         ("market_funds", "市场资金"),
-        ("total_pnl", "总盈利(浮动)"),
+        ("total_pnl", "总盈利"),
+        ("floating_pnl", "浮动盈亏"),
+        ("realized_pnl", "已实现盈亏(估算)"),
         ("long_market_value", "多头敞口"),
         ("short_market_value", "空头敞口"),
         ("short_margin_used", "空头初始保证金占用"),
@@ -684,10 +736,18 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
                 else value
             )
 
+    for column in ["Event_Tags", "event_tags"]:
+        if column in frame.columns:
+            frame[column] = frame[column].map(
+                lambda value: " / ".join(str(item) for item in value) if isinstance(value, list) else value
+            )
+
     for column in [
         "breakout_valid",
+        "breakout_52w",
         "fake_breakout",
         "breakdown",
+        "event_driven",
         "eligible_for_risk",
         "earnings_event_block",
         "Earnings_Event_Block",
@@ -733,8 +793,19 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
             "hist_vol_20d": "20日历史波动率",
             "relative_strength": "相对强弱",
             "breakout_valid": "有效突破",
+            "breakout_52w": "突破52周新高",
             "fake_breakout": "假突破嫌疑",
             "breakdown": "跌破支撑",
+            "high_52w": "52周高点",
+            "distance_to_52w_high_pct": "距52周高点%",
+            "high_52w_strength": "52周新高强度",
+            "event_driven": "事件驱动",
+            "event_driver": "事件标签",
+            "event_tags": "事件标签组",
+            "event_driven_score": "事件驱动强度",
+            "sigma_return_pct": "Sigma日收益%",
+            "sigma_z_score": "Sigma Z分数",
+            "sigma_2_event": "2Sigma异动",
             "expected_return_5d": "5日预期收益",
             "expected_return_10d": "10日预期收益",
             "signal_strength": "信号强度",
@@ -1305,6 +1376,14 @@ def _build_new_alpha_targets(
                 "Latest_News_Time": candidate.get("latest_news_time"),
                 "Latest_News_Age_Hours": candidate.get("latest_news_age_hours"),
                 "Latest_Headline": candidate.get("latest_headline"),
+                "breakout_52w": candidate.get("breakout_52w"),
+                "high_52w": candidate.get("high_52w"),
+                "distance_to_52w_high_pct": candidate.get("distance_to_52w_high_pct"),
+                "high_52w_strength": candidate.get("high_52w_strength"),
+                "event_driven": candidate.get("event_driven"),
+                "event_driver": candidate.get("event_driver"),
+                "event_tags": candidate.get("event_tags"),
+                "event_driven_score": candidate.get("event_driven_score"),
                 "Target_EV": round(float(candidate.get("target_ev") or 0.0), 4),
                 "Win_Rate": round(float(candidate.get("win_rate") or 0.0), 4),
                 "Signal_Mode": candidate.get("signal_label", "观望"),
@@ -1624,12 +1703,7 @@ def run_analysis_pipeline(holding_tickers: tuple[str, ...], kelly_fraction: floa
         radar_candidates.append(candidate_profile)
     radar_candidates = sorted(
         radar_candidates,
-        key=lambda item: (
-            bool(item.get("eligible_for_risk")),
-            bool(item.get("breakout_valid") or item.get("breakdown")),
-            abs(float(item.get("target_ev") or 0.0)),
-            abs(float(item.get("expected_return_5d") or 0.0)),
-        ),
+        key=_radar_candidate_priority,
         reverse=True,
     )[:5]
     trade_reference_profiles = {**core_signal_profiles, **holding_profiles}
@@ -1760,20 +1834,27 @@ if st.session_state.get("analysis_signature") == analysis_signature:
 
 if analysis is not None:
     holdings_reference_snapshot = resolve_reference_snapshot(holdings, saved_holdings_history)
+    quote_map = analysis["quote_map"]
     holdings_change_records = build_holdings_change_records(
         holdings,
         list((holdings_reference_snapshot or {}).get("holdings") or []),
+        quote_map,
     )
+    realized_pnl_total = sum(float(item.get("realized_pnl") or 0.0) for item in holdings_change_records)
     snapshot_order_action_records: list[dict[str, Any]] = []
     holdings_history_rows = build_holdings_history_summary(saved_holdings_history, limit=12)
-    quote_map = analysis["quote_map"]
     holdings_enriched = enrich_holdings_with_quotes(holdings, quote_map)
     short_borrow_metrics = {
         item["ticker"]: get_short_borrow_metrics(item["ticker"])
         for item in holdings_enriched
         if str(item.get("side") or "LONG").upper() == "SHORT" and item.get("ticker")
     }
-    account_overview = compute_account_overview(holdings_enriched, current_account_state, borrow_metrics=short_borrow_metrics)
+    account_overview = compute_account_overview(
+        holdings_enriched,
+        current_account_state,
+        borrow_metrics=short_borrow_metrics,
+        realized_pnl=realized_pnl_total,
+    )
     core_signal_profiles = analysis["core_signal_profiles"]
     holding_profiles = analysis["holding_profiles"]
     factor_map = analysis["factor_map"]
@@ -1861,7 +1942,7 @@ if analysis is not None:
     budget_col1, budget_col2, budget_col3, budget_col4, budget_col5, budget_col6 = st.columns(6)
     budget_col1.metric("账户总权益", f"${account_overview['total_equity']:,.0f}")
     budget_col2.metric("市场资金", f"${account_overview['market_funds']:,.0f}")
-    budget_col3.metric("总盈利(浮动)", f"${account_overview['total_pnl']:,.0f}")
+    budget_col3.metric("总盈利", f"${account_overview['total_pnl']:,.0f}")
     budget_col4.metric("闲余资金", f"${account_overview['idle_cash']:,.0f}")
     budget_col5.metric("多头敞口", f"${account_overview['long_market_value']:,.0f}")
     budget_col6.metric("空头敞口", f"${account_overview['short_market_value']:,.0f}")

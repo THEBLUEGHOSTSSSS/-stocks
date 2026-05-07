@@ -9,14 +9,14 @@
   {
     "ticker": "QQQ",
     "side": "LONG",
-    "shares": 2.0,
+    "shares": 1.0,
     "cost_basis": 576.03,
     "notes": "科技成长指数ETF"
   },
   {
     "ticker": "SMR",
     "side": "LONG",
-    "shares": 40.0,
+    "shares": 20.0,
     "cost_basis": 11.125,
     "notes": "交易所导入/NYSE"
   },
@@ -30,7 +30,7 @@
   {
     "ticker": "JOBY",
     "side": "LONG",
-    "shares": 30.0,
+    "shares": 10.0,
     "cost_basis": 8.53,
     "notes": "交易所导入/NYSE"
   },
@@ -58,8 +58,36 @@
   {
     "ticker": "MU",
     "side": "LONG",
-    "shares": 5.0,
+    "shares": 3.0,
     "cost_basis": 640.96,
     "notes": "交易所导入/NASDAQ"
+  },
+  {
+    "ticker": "MRVL",
+    "side": "LONG",
+    "shares": 5.0,
+    "cost_basis": 169.43,
+    "notes": "交易所导入/NASDAQ"
+  },
+  {
+    "ticker": "RKLB",
+    "side": "LONG",
+    "shares": 10.0,
+    "cost_basis": 81.16,
+    "notes": "交易所导入/NASDAQ"
+  },
+  {
+    "ticker": "NOK",
+    "side": "LONG",
+    "shares": 50.0,
+    "cost_basis": 13.245,
+    "notes": "交易所导入/NYSE"
+  },
+  {
+    "ticker": "SOXL",
+    "side": "LONG",
+    "shares": 5.0,
+    "cost_basis": 161.26,
+    "notes": "交易所导入/NYSE Arca ETF"
   }
 ]

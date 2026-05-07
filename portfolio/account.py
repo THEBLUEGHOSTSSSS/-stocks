@@ -80,6 +80,7 @@ def compute_account_overview(
     holdings_enriched: list[dict[str, Any]],
     account_state: dict[str, Any],
     borrow_metrics: dict[str, dict[str, Any]] | None = None,
+    realized_pnl: float = 0.0,
 ) -> dict[str, Any]:
     normalized_state = normalize_account_state(account_state)
     long_market_value = sum(
@@ -92,7 +93,9 @@ def compute_account_overview(
         for item in holdings_enriched
         if str(item.get("side") or "LONG").upper() == "SHORT"
     )
-    total_pnl = sum(float(item.get("pnl") or 0.0) for item in holdings_enriched)
+    floating_pnl = sum(float(item.get("pnl") or 0.0) for item in holdings_enriched)
+    realized_pnl_value = float(realized_pnl or 0.0)
+    total_pnl = floating_pnl + realized_pnl_value
     net_exposure = sum(float(item.get("net_exposure") or 0.0) for item in holdings_enriched)
     base_margin_ratio = float(normalized_state["short_margin_ratio"])
     borrow_metrics_lookup = borrow_metrics or {}
@@ -162,6 +165,8 @@ def compute_account_overview(
         "short_maintenance_ratio": maintenance_margin_ratio,
         "market_funds": market_funds,
         "total_pnl": total_pnl,
+        "floating_pnl": floating_pnl,
+        "realized_pnl": realized_pnl_value,
         "long_market_value": long_market_value,
         "short_market_value": short_market_value,
         "short_margin_used": short_margin_used,
