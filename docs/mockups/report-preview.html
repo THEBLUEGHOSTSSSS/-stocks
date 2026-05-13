@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>样例报告预览</title>
+    <style>
+      :root {
+        --bg: #f4f0e8;
+        --card: #fffdf8;
+        --ink: #1f2937;
+        --muted: #6b7280;
+        --line: #ded6c7;
+        --accent: #0f4c81;
+        --accent-soft: #dceaf7;
+        --danger: #9f3a22;
+        --danger-soft: #f7dfd7;
+        --success: #21623d;
+        --success-soft: #d9eedf;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "PingFang SC", "Noto Sans SC", "Helvetica Neue", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(15, 76, 129, 0.10), transparent 28%),
+          linear-gradient(180deg, #faf6ef 0%, var(--bg) 100%);
+      }
+
+      .page {
+        width: 1040px;
+        min-height: 900px;
+        margin: 0 auto;
+        padding: 36px;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        font-size: 14px;
+        letter-spacing: 0.12em;
+        color: var(--accent);
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 42px;
+        line-height: 1.05;
+      }
+
+      .subtitle {
+        margin: 0;
+        max-width: 760px;
+        font-size: 16px;
+        line-height: 1.7;
+        color: var(--muted);
+      }
+
+      .meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(140px, 1fr));
+        gap: 12px;
+        min-width: 320px;
+      }
+
+      .meta-card,
+      .panel,
+      .signal-card,
+      .table-card,
+      .note {
+        border: 1px solid var(--line);
+        background: rgba(255, 253, 248, 0.9);
+        border-radius: 22px;
+        box-shadow: 0 14px 34px rgba(31, 41, 55, 0.05);
+      }
+
+      .meta-card {
+        padding: 16px 18px;
+      }
+
+      .meta-card .label {
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+
+      .meta-card .value {
+        font-size: 24px;
+        font-weight: 700;
+      }
+
+      .content {
+        display: grid;
+        grid-template-columns: 1.18fr 0.92fr;
+        gap: 20px;
+      }
+
+      .left,
+      .right {
+        display: grid;
+        gap: 20px;
+      }
+
+      .panel {
+        padding: 22px;
+      }
+
+      .section-title {
+        margin: 0 0 16px;
+        font-size: 22px;
+      }
+
+      .signal-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .signal-card {
+        padding: 16px;
+      }
+
+      .signal-card .name {
+        margin: 0 0 10px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .signal-card .big {
+        margin: 0 0 10px;
+        font-size: 28px;
+        font-weight: 700;
+      }
+
+      .pill {
+        display: inline-block;
+        padding: 5px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .pill.success {
+        color: var(--success);
+        background: var(--success-soft);
+      }
+
+      .pill.warn {
+        color: var(--danger);
+        background: var(--danger-soft);
+      }
+
+      .chart {
+        height: 250px;
+        padding: 20px 18px 10px;
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(15, 76, 129, 0.07), rgba(15, 76, 129, 0.01));
+        border: 1px solid rgba(15, 76, 129, 0.12);
+      }
+
+      .bars {
+        display: flex;
+        align-items: end;
+        gap: 16px;
+        height: 170px;
+        padding-top: 16px;
+      }
+
+      .bar-wrap {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .bar {
+        width: 100%;
+        max-width: 68px;
+        border-radius: 18px 18px 8px 8px;
+        background: linear-gradient(180deg, #0f4c81 0%, #68a7dc 100%);
+      }
+
+      .bar.neg {
+        background: linear-gradient(180deg, #c86a48 0%, #efb49d 100%);
+      }
+
+      .bar-label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .bar-value {
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        padding: 12px 8px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+      }
+
+      th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .mono {
+        font-variant-numeric: tabular-nums;
+      }
+
+      .note {
+        padding: 18px 20px;
+      }
+
+      .note-title {
+        margin: 0 0 10px;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .note p,
+      .note li {
+        color: var(--muted);
+        line-height: 1.65;
+      }
+
+      .note ul {
+        margin: 10px 0 0;
+        padding-left: 18px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="header">
+        <div>
+          <p class="eyebrow">Sample Output</p>
+          <h1>美股量化半自动助手 · 样例报告</h1>
+          <p class="subtitle">
+            该预览用于 GitHub 首页展示，模拟一次分析后的报告视图，涵盖市场状态、核心信号、持仓执行建议与风险提示。
+          </p>
+        </div>
+        <div class="meta">
+          <div class="meta-card">
+            <div class="label">分析日期</div>
+            <div class="value mono">2026-05-13</div>
+          </div>
+          <div class="meta-card">
+            <div class="label">市场状态</div>
+            <div class="value">Risk-On</div>
+          </div>
+          <div class="meta-card">
+            <div class="label">账户权益</div>
+            <div class="value mono">$5,291.89</div>
+          </div>
+          <div class="meta-card">
+            <div class="label">风控门控</div>
+            <div class="value">正常</div>
+          </div>
+        </div>
+      </header>
+
+      <section class="content">
+        <div class="left">
+          <section class="panel">
+            <h2 class="section-title">核心信号总览</h2>
+            <div class="signal-grid">
+              <article class="signal-card">
+                <p class="name">QQQ</p>
+                <p class="big mono">ADD</p>
+                <span class="pill success">趋势过滤通过</span>
+              </article>
+              <article class="signal-card">
+                <p class="name">NVDA</p>
+                <p class="big mono">HOLD</p>
+                <span class="pill success">维持核心仓</span>
+              </article>
+              <article class="signal-card">
+                <p class="name">INTC</p>
+                <p class="big mono">WATCH</p>
+                <span class="pill warn">成本价熔断提示</span>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2 class="section-title">执行候选与预期收益</h2>
+            <div class="chart">
+              <div class="bars">
+                <div class="bar-wrap">
+                  <div class="bar" style="height: 74%;"></div>
+                  <div class="bar-value mono">+6.8%</div>
+                  <div class="bar-label">NVDA</div>
+                </div>
+                <div class="bar-wrap">
+                  <div class="bar" style="height: 56%;"></div>
+                  <div class="bar-value mono">+4.9%</div>
+                  <div class="bar-label">SMR</div>
+                </div>
+                <div class="bar-wrap">
+                  <div class="bar" style="height: 43%;"></div>
+                  <div class="bar-value mono">+3.5%</div>
+                  <div class="bar-label">SOXL</div>
+                </div>
+                <div class="bar-wrap">
+                  <div class="bar neg" style="height: 28%;"></div>
+                  <div class="bar-value mono">-2.1%</div>
+                  <div class="bar-label">MU</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel table-card">
+            <h2 class="section-title">持仓执行摘要</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>代码</th>
+                  <th>动作</th>
+                  <th>价格</th>
+                  <th>理由</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>NVDA</td>
+                  <td>HOLD</td>
+                  <td class="mono">191.20</td>
+                  <td>强趋势延续，维持主仓</td>
+                </tr>
+                <tr>
+                  <td>SOXL</td>
+                  <td>ADD</td>
+                  <td class="mono">112.10</td>
+                  <td>RSI 超卖且仍站上 SMA120</td>
+                </tr>
+                <tr>
+                  <td>INTC</td>
+                  <td>WATCH</td>
+                  <td class="mono">120.61</td>
+                  <td>发现成本价异常，已熔断重置</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+        </div>
+
+        <div class="right">
+          <section class="panel table-card">
+            <h2 class="section-title">期权预言机</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>标的</th>
+                  <th>策略</th>
+                  <th>场景</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>QQQ</td>
+                  <td>Covered Call</td>
+                  <td>冲击阻力位，收租降本</td>
+                </tr>
+                <tr>
+                  <td>SMR</td>
+                  <td>Strangle</td>
+                  <td>事件波动预期上升</td>
+                </tr>
+                <tr>
+                  <td>NVDA</td>
+                  <td>Bear Put Spread</td>
+                  <td>已有浮盈，防守套保</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="note">
+            <h3 class="note-title">报告阅读方式</h3>
+            <ul>
+              <li>先看市场状态与风险门控，再看个股动作，不要倒过来。</li>
+              <li>若系统提示“接飞刀风险”或“数据熔断”，优先停手排查。</li>
+              <li>期权建议只提供结构与场景，不替代真实交易权限与保证金校验。</li>
+            </ul>
+          </section>
+
+          <section class="note">
+            <h3 class="note-title">风险免责声明</h3>
+            <p>
+              本报告仅用于研究与界面展示，不构成投资建议、收益承诺或自动交易指令。公开数据可能存在延迟、缺失、错配与异常值；任何实盘交易前，均应由使用者自行复核行情、仓位、交易权限、保证金与券商下单细节。
+            </p>
+          </section>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

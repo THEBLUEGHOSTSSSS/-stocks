@@ -7,8 +7,10 @@ from data.indicators import build_factor_snapshot
 from data.macro import get_macro_snapshot
 from data.options import get_near_term_options_summary
 from data.sentiment import build_news_features
+from math_engine import build_market_neutral_math_snapshot
 from models.regime import classify_market_regime, detect_breakdown_signal, detect_sigma_event
 from models.signals import build_candidate_trade_profile
+from portfolio.ticker_relationships import get_ticker_relationship_profile
 
 
 _EVENT_TAG_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -46,6 +48,98 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
         seen.add(normalized)
         ordered.append(normalized)
     return ordered
+
+
+def _trailing_return_pct(history: Any, lookback_days: int) -> float | None:
+    if not _usable_history(history) or lookback_days <= 0:
+        return None
+
+    close_series = history["close"].dropna()
+    if len(close_series) <= lookback_days:
+        return None
+
+    start_price = float(close_series.iloc[-(lookback_days + 1)])
+    end_price = float(close_series.iloc[-1])
+    if start_price <= 0.0:
+        return None
+    return (end_price / start_price - 1.0) * 100.0
+
+
+def _resolve_relationship_spillover(
+    ticker: str,
+    relationship_profile: dict[str, Any],
+    histories: dict[str, Any],
+) -> dict[str, Any]:
+    default = {
+        "related_leader_ticker": "",
+        "related_leader_return_5d_pct": None,
+        "related_leader_return_20d_pct": None,
+        "related_leader_return_60d_pct": None,
+        "spillover_momentum_score": 0.0,
+        "spillover_trigger": False,
+        "spillover_reason": "",
+    }
+
+    related_tickers = list(relationship_profile.get("related_tickers") or [])
+    relationship_strength = float(relationship_profile.get("relationship_strength") or 0.0)
+    normalized_ticker = str(ticker or "").strip().upper()
+    if not related_tickers or relationship_strength <= 0.0:
+        return default
+
+    best_leader: dict[str, Any] | None = None
+    for related_ticker in related_tickers:
+        normalized_related = str(related_ticker or "").strip().upper()
+        if not normalized_related or normalized_related == normalized_ticker:
+            continue
+
+        related_history = histories.get(normalized_related)
+        if not _usable_history(related_history):
+            continue
+
+        return_5d = _trailing_return_pct(related_history, 5)
+        return_20d = _trailing_return_pct(related_history, 20)
+        return_60d = _trailing_return_pct(related_history, 60)
+        if return_5d is None and return_20d is None and return_60d is None:
+            continue
+
+        composite = (
+            0.4 * _clip_unit(max(float(return_5d or 0.0), 0.0) / 10.0)
+            + 0.4 * _clip_unit(max(float(return_20d or 0.0), 0.0) / 25.0)
+            + 0.2 * _clip_unit(max(float(return_60d or 0.0), 0.0) / 45.0)
+        )
+        if best_leader is None or composite > float(best_leader.get("composite") or 0.0):
+            best_leader = {
+                "ticker": normalized_related,
+                "return_5d": return_5d,
+                "return_20d": return_20d,
+                "return_60d": return_60d,
+                "composite": composite,
+            }
+
+    if best_leader is None:
+        return default
+
+    spillover_momentum_score = float(min(1.0, relationship_strength * float(best_leader["composite"])))
+    leader_return_5d = float(best_leader.get("return_5d") or 0.0)
+    leader_return_20d = float(best_leader.get("return_20d") or 0.0)
+    leader_return_60d = float(best_leader.get("return_60d") or 0.0)
+    spillover_trigger = bool(
+        spillover_momentum_score >= 0.38
+        and ((leader_return_5d >= 4.0 and leader_return_20d >= 7.5) or leader_return_20d >= 15.0)
+    )
+    reason = (
+        f"{best_leader['ticker']} 领涨 5日 {leader_return_5d:.1f}% / 20日 {leader_return_20d:.1f}%，"
+        f"关联扩散强度 {spillover_momentum_score:.2f}"
+    )
+    return {
+        "related_leader_ticker": str(best_leader["ticker"]),
+        "related_leader_return_5d_pct": round(leader_return_5d, 2),
+        "related_leader_return_20d_pct": round(leader_return_20d, 2),
+        "related_leader_return_60d_pct": round(leader_return_60d, 2),
+        "spillover_momentum_score": spillover_momentum_score,
+        "spillover_trigger": spillover_trigger,
+        "spillover_reason": reason,
+    }
 
 
 def _resolve_52w_high_context(history: Any) -> dict[str, Any]:
@@ -181,12 +275,35 @@ def _candidate_priority_key(candidate: dict[str, Any]) -> tuple[float, float, fl
     normalized_volume = float(min(max(volume_ratio, 1.0), 2.5))
     high_52w_strength = float(candidate.get("high_52w_strength") or 0.0)
     event_driven_score = float(candidate.get("event_driven_score") or 0.0)
+    relationship_strength = float(candidate.get("relationship_strength") or 0.0)
+    spillover_momentum_score = float(candidate.get("spillover_momentum_score") or 0.0)
+    orthogonal_alpha_score = abs(float(candidate.get("orthogonal_alpha_score") or 0.0))
+    stat_arb_trigger = 0.12 if bool(candidate.get("stat_arb_trigger")) else 0.0
     trend_quality = expected_return * (0.7 + 0.3 * predictive_confidence) * normalized_volume / hist_vol
     return (
         breakout_bonus,
-        trend_quality + target_ev * 4.0 + 0.08 * high_52w_strength + 0.06 * event_driven_score + eligibility_bonus,
+        trend_quality
+        + target_ev * 4.0
+        + 0.08 * high_52w_strength
+        + 0.06 * event_driven_score
+        + 0.05 * relationship_strength
+        + 0.08 * spillover_momentum_score
+        + 0.05 * orthogonal_alpha_score
+        + stat_arb_trigger
+        + eligibility_bonus,
         signal_strength,
         predictive_confidence,
+    )
+
+
+def _shortlist_priority_key(candidate: dict[str, Any]) -> tuple[float, float, float, float, float, float]:
+    return (
+        1.0 if bool(candidate.get("benchmark_above_sma_60")) else 0.0,
+        max(float(candidate.get("idio_zscore") or 0.0), 0.0),
+        1.0 if bool(float(candidate.get("close") or 0.0) >= float(candidate.get("sma_60") or candidate.get("close") or 0.0)) else 0.0,
+        float(candidate.get("high_52w_strength") or 0.0),
+        float(candidate.get("volume_ratio_20d") or 0.0),
+        abs(float(candidate.get("daily_return_pct") or 0.0)),
     )
 
 
@@ -202,6 +319,18 @@ def scan_breakout_candidates(
     benchmark_history = histories.get(benchmark)
     if not _usable_history(benchmark_history):
         benchmark_history = None
+    qqq_history = histories.get("QQQ")
+    if not _usable_history(qqq_history):
+        qqq_history = benchmark_history
+    qqq_snapshot = build_factor_snapshot(qqq_history) if _usable_history(qqq_history) else {}
+    qqq_close = qqq_snapshot.get("close")
+    qqq_sma_60 = qqq_snapshot.get("sma_60")
+    benchmark_above_sma_60 = bool(
+        qqq_close is not None
+        and qqq_sma_60 is not None
+        and float(qqq_sma_60) > 0.0
+        and float(qqq_close) >= float(qqq_sma_60)
+    )
 
     resolved_regime_score, resolved_vix_value = _resolve_regime_context(
         histories,
@@ -210,16 +339,17 @@ def scan_breakout_candidates(
         vix_value,
     )
 
-    candidates: list[dict[str, Any]] = []
+    base_candidates: list[dict[str, Any]] = []
+    candidate_news_map: dict[str, dict[str, Any]] = {}
     for ticker in universe:
         history = histories.get(ticker)
-        if not _usable_history(history) or len(history) < 25:
+        if not _usable_history(history) or len(history) < 65:
             continue
 
         snapshot = build_factor_snapshot(history, benchmark_history)
         latest = history.iloc[-1]
-        previous_high_20d = float(history["high"].iloc[-21:-1].max())
-        previous_low_20d = float(history["low"].iloc[-21:-1].min())
+        previous_high_60d = float(history["high"].iloc[-61:-1].max())
+        previous_low_60d = float(history["low"].iloc[-61:-1].min())
         close_position = _close_position_in_range(
             float(latest["open"]),
             float(latest["high"]),
@@ -228,47 +358,97 @@ def scan_breakout_candidates(
         )
         price_change_pct = float(snapshot.get("daily_return_pct") or 0.0)
         volume_ratio = float(snapshot.get("volume_ratio_20d") or 0.0)
+        log_return_60d = float(snapshot.get("log_return_60d") or 0.0)
+        sma_60 = float(snapshot.get("sma_60") or snapshot.get("sma_20") or latest["close"])
         high_52w_context = _resolve_52w_high_context(history)
+        # V2.1: 候选池不再因为 20 日脉冲而误判突破，必须同时满足 60 日级别的新高与慢趋势同向。
         valid_breakout = bool(
-            float(latest["close"]) > previous_high_20d
+            float(latest["close"]) > previous_high_60d
             and volume_ratio >= 1.5
             and close_position >= 0.6
             and price_change_pct >= 3.0
+            and log_return_60d >= 0.08
+            and float(latest["close"]) >= sma_60
         )
         fake_breakout = bool(
-            float(latest["close"]) > previous_high_20d
-            and (volume_ratio < 1.5 or close_position < 0.6)
+            float(latest["close"]) > previous_high_60d
+            and (volume_ratio < 1.5 or close_position < 0.6 or log_return_60d < 0.08 or float(latest["close"]) < sma_60)
         )
-        breakdown = bool(float(latest["close"]) < previous_low_20d and volume_ratio >= 1.5)
+        breakdown = bool(
+            float(latest["close"]) < previous_low_60d
+            and volume_ratio >= 1.5
+            and log_return_60d <= -0.08
+            and float(latest["close"]) <= sma_60
+        )
         sigma_event = detect_sigma_event(history)
+        relationship_profile = get_ticker_relationship_profile(ticker)
+        spillover_context = _resolve_relationship_spillover(ticker, relationship_profile, histories)
         candidate_features = {
             "ticker": ticker,
             "close": float(latest["close"]),
             "daily_return_pct": price_change_pct,
             "log_return_10d": snapshot.get("log_return_10d"),
+            "log_return_60d": snapshot.get("log_return_60d"),
             "volume_ratio_20d": volume_ratio,
             "atr_14": snapshot.get("atr_14"),
             "hist_vol_20d": snapshot.get("hist_vol_20d"),
             "rsi_14": snapshot.get("rsi_14"),
             "sma_20": snapshot.get("sma_20"),
+            "sma_60": snapshot.get("sma_60"),
             "upper_shadow_pct": snapshot.get("upper_shadow_pct"),
             "intraday_drawdown_pct": snapshot.get("intraday_drawdown_pct"),
             "relative_strength": snapshot.get("relative_strength_20d_vs_benchmark"),
             "relative_strength_20d_vs_benchmark": snapshot.get("relative_strength_20d_vs_benchmark"),
             "breakout_20d": bool(snapshot.get("breakout_20d")),
+            "breakout_60d": bool(snapshot.get("breakout_60d")),
             "breakout_valid": valid_breakout,
             "fake_breakout": fake_breakout,
             "breakdown": breakdown,
             "close_position_in_range": close_position,
             "trade_direction": "SHORT" if breakdown and not valid_breakout else ("LONG" if valid_breakout else "FLAT"),
+            "benchmark_above_sma_60": benchmark_above_sma_60,
+            "benchmark_close": qqq_close,
+            "benchmark_sma_60": qqq_sma_60,
             **high_52w_context,
+            **relationship_profile,
+            **spillover_context,
             "sigma_return_pct": sigma_event.get("return_pct"),
             "sigma_z_score": sigma_event.get("z_score"),
             "sigma_2_event": bool(sigma_event.get("is_2sigma")),
         }
-        candidate_news = build_news_features(get_news_items(ticker, limit=5))
-        event_driver = _infer_event_driver(candidate_news, price_change_pct, volume_ratio, sigma_event)
+        event_driver = _infer_event_driver({}, price_change_pct, volume_ratio, sigma_event)
         candidate_features.update(event_driver)
+        base_candidates.append(candidate_features)
+
+    math_snapshot = build_market_neutral_math_snapshot(
+        {str(candidate["ticker"]): candidate for candidate in base_candidates},
+        histories,
+        [str(candidate["ticker"]) for candidate in base_candidates],
+    )
+    for candidate in base_candidates:
+        candidate.update(math_snapshot.signal_map.get(str(candidate["ticker"]), {}))
+
+    shortlist_count = max(max_candidates * 3, 12)
+    shortlisted = sorted(base_candidates, key=_shortlist_priority_key, reverse=True)[:shortlist_count]
+    candidates: list[dict[str, Any]] = []
+    for candidate in shortlisted:
+        ticker = str(candidate["ticker"])
+        candidate_news = build_news_features(get_news_items(ticker, limit=5))
+        candidate_features = {
+            **candidate,
+        }
+        candidate_features.update(
+            _infer_event_driver(
+                candidate_news,
+                float(candidate.get("daily_return_pct") or 0.0),
+                float(candidate.get("volume_ratio_20d") or 0.0),
+                {
+                    "is_2sigma": bool(candidate.get("sigma_2_event")),
+                    "return_pct": candidate.get("sigma_return_pct"),
+                    "z_score": candidate.get("sigma_z_score"),
+                },
+            )
+        )
         candidate_profile = build_candidate_trade_profile(
             candidate_features,
             resolved_regime_score,

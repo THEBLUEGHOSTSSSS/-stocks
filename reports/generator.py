@@ -11,6 +11,37 @@ import pandas as pd
 from config import SNAPSHOTS_DIR
 
 
+RESEARCH_THEME_LABELS = {
+    "momentum": "动量",
+    "mean_reversion": "均值回归",
+    "volatility": "波动率",
+    "options_flow": "期权流",
+    "liquidity": "流动性",
+    "macro": "宏观",
+    "cross_asset": "跨资产联动",
+    "earnings": "财报漂移",
+}
+
+RESEARCH_STATUS_LABELS = {
+    "ok": "已完成",
+    "error": "抓取失败",
+}
+
+
+def _format_research_theme(theme: Any) -> str:
+    normalized = str(theme or "").strip()
+    if not normalized:
+        return ""
+    return RESEARCH_THEME_LABELS.get(normalized, normalized)
+
+
+def _format_research_status(status: Any) -> str:
+    normalized = str(status or "").strip().lower()
+    if not normalized:
+        return "未知"
+    return RESEARCH_STATUS_LABELS.get(normalized, str(status))
+
+
 def _json_safe_value(value: Any) -> Any:
     if isinstance(value, pd.Timestamp):
         return value.isoformat()
@@ -79,6 +110,51 @@ def _order_earnings_summary(order: dict[str, Any]) -> str:
     return " / ".join(parts) if parts else "无近期财报风险标记"
 
 
+def _resolve_execution_direction_value(order: dict[str, Any]) -> Any:
+    return order.get("Execution_Direction") or order.get("execution_direction") or order.get("Trade_Direction") or order.get("trade_direction")
+
+
+def _normalize_execution_order(order: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(order)
+    execution_direction = _resolve_execution_direction_value(normalized)
+    if execution_direction is not None:
+        normalized["Execution_Direction"] = execution_direction
+        normalized["execution_direction"] = execution_direction
+    return normalized
+
+
+def _serialize_alpha_research(alpha_research: dict[str, Any] | None) -> dict[str, Any]:
+    if not alpha_research:
+        return {}
+    insights = []
+    for insight in list(alpha_research.get("actionable_insights") or [])[:8]:
+        insights.append(
+            {
+                "paper_id": insight.get("paper_id"),
+                "source": insight.get("source"),
+                "title": insight.get("title"),
+                "published_at": insight.get("published_at"),
+                "url": insight.get("url"),
+                "themes": list(insight.get("themes") or []),
+                "signal_family": insight.get("signal_family"),
+                "factor_formula": insight.get("factor_formula"),
+                "entry_rule": insight.get("entry_rule"),
+                "exit_rule": insight.get("exit_rule"),
+                "risk_filters": list(insight.get("risk_filters") or []),
+                "summary": insight.get("summary"),
+            }
+        )
+    return {
+        "Status": alpha_research.get("status"),
+        "Error": alpha_research.get("error"),
+        "Fetched_At": alpha_research.get("fetched_at"),
+        "Paper_Count": int(alpha_research.get("paper_count") or 0),
+        "Theme_Counts": alpha_research.get("theme_counts") or {},
+        "Summary": alpha_research.get("summary") or "",
+        "Actionable_Insights": insights,
+    }
+
+
 def build_execution_payload(
     analysis_date: str,
     regime: dict[str, Any],
@@ -90,7 +166,10 @@ def build_execution_payload(
     kelly_weights: dict[str, float],
     quant_logic_log: str,
     walk_forward_validation: dict[str, Any] | None = None,
+    alpha_research: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    normalized_legacy_orders = [_normalize_execution_order(order) for order in legacy_orders]
+    normalized_new_alpha_targets = [_normalize_execution_order(order) for order in new_alpha_targets]
     payload = {
         "Date": analysis_date,
         "Market_Regime_Score": round(float(regime.get("score", 0.0)), 4),
@@ -98,10 +177,11 @@ def build_execution_payload(
         "Macro_Snapshot": macro_snapshot,
         "Portfolio_Budget": account_overview,
         "Execution_Orders": {
-            "Legacy_Positions": legacy_orders,
-            "New_Alpha_Targets": new_alpha_targets,
+            "Legacy_Positions": normalized_legacy_orders,
+            "New_Alpha_Targets": normalized_new_alpha_targets,
         },
         "Mathematical_Inference": mathematical_inference,
+        "Academic_Alpha_Research": _serialize_alpha_research(alpha_research),
         "Kelly_Weights": {ticker: round(weight, 4) for ticker, weight in kelly_weights.items()},
         "Quant_Logic_Log": quant_logic_log[:50],
     }
@@ -125,6 +205,25 @@ def build_markdown_report(payload: dict[str, Any]) -> str:
     for key, value in payload.get("Macro_Snapshot", {}).items():
         lines.append(f"- {key}: {json.dumps(value, ensure_ascii=False)}")
     lines.append("")
+    alpha_research = payload.get("Academic_Alpha_Research") or {}
+    if alpha_research:
+        lines.append("## 学术 Alpha 追踪")
+        lines.append(f"- 状态: {_format_research_status(alpha_research.get('Status'))}")
+        if alpha_research.get("Error"):
+            lines.append(f"- 错误: {alpha_research.get('Error')}")
+        lines.append(f"- 抓取时间: {alpha_research.get('Fetched_At')}")
+        lines.append(f"- 论文数量: {alpha_research.get('Paper_Count')}")
+        lines.append(f"- 摘要: {alpha_research.get('Summary')}")
+        for theme, count in (alpha_research.get("Theme_Counts") or {}).items():
+            lines.append(f"- 主题 {_format_research_theme(theme)}: {count}")
+        insights = alpha_research.get("Actionable_Insights") or []
+        for insight in insights[:5]:
+            lines.append(
+                "- "
+                f"{insight.get('title')} / {insight.get('signal_family')} / 公式: {insight.get('factor_formula')} / "
+                f"入场: {insight.get('entry_rule')} / 出场: {insight.get('exit_rule')}"
+            )
+        lines.append("")
     walk_forward_validation = payload.get("Walk_Forward_Validation") or {}
     if walk_forward_validation:
         lines.append("## 样本外回测")
@@ -222,7 +321,7 @@ def build_markdown_report(payload: dict[str, Any]) -> str:
     for order in payload.get("Execution_Orders", {}).get("Legacy_Positions", []):
         lines.append(
             "- "
-            f"{order.get('Ticker')} / {order.get('Signal')} / {order.get('Position_Side') or order.get('Trade_Direction')} / "
+            f"{order.get('Ticker')} / {order.get('Signal')} / {order.get('Position_Side') or _resolve_execution_direction_value(order)} / "
             f"财报信息: {_order_earnings_summary(order)} / 门控: {order.get('Gate_Reason')}"
         )
     lines.append("")
@@ -230,7 +329,7 @@ def build_markdown_report(payload: dict[str, Any]) -> str:
     for order in payload.get("Execution_Orders", {}).get("New_Alpha_Targets", []):
         lines.append(
             "- "
-            f"{order.get('Ticker')} / {order.get('Signal')} / {order.get('Trade_Direction')} / "
+            f"{order.get('Ticker')} / {order.get('Signal')} / {_resolve_execution_direction_value(order)} / "
             f"财报信息: {_order_earnings_summary(order)} / 门控: {order.get('Gate_Reason')}"
         )
     lines.append("")

@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from config import HOLDINGS_FILE, HOLDINGS_HISTORY_FILE
+from data.sanity import sanitize_cost_basis_against_market_price
 
 
 def _normalize_row(row: dict[str, Any]) -> dict[str, Any] | None:
@@ -238,6 +239,11 @@ def build_holdings_change_records(
         market_price = _safe_float(quote.get("market_price", quote.get("close")))
         pre_market_price = _safe_float(quote.get("pre_market_price"))
         post_market_price = _safe_float(quote.get("post_market_price"))
+        current_cost_basis, cost_basis_sanity_warning = sanitize_cost_basis_against_market_price(
+            current_cost_basis,
+            market_price,
+            ticker,
+        )
 
         if previous is None:
             status = "新增"
@@ -292,6 +298,7 @@ def build_holdings_change_records(
                 "market_price": market_price,
                 "pre_market_price": pre_market_price,
                 "post_market_price": post_market_price,
+                "cost_basis_sanity_warning": cost_basis_sanity_warning,
                 "closed_shares": closed_shares,
                 "realized_pnl": realized_pnl,
                 "closeout_result": closeout_result,
@@ -324,6 +331,7 @@ def build_snapshot_order_action_records(
                 "previous_notes": (previous or {}).get("notes"),
                 "signal": order.get("Signal"),
                 "position_side": order.get("Position_Side"),
+                "execution_direction": order.get("Execution_Direction") or order.get("execution_direction") or order.get("Trade_Direction") or order.get("trade_direction"),
                 "trade_direction": order.get("Trade_Direction"),
                 "suggested_shares": order.get("Suggested_Shares"),
                 "reference_price": order.get("Reference_Price"),
@@ -377,8 +385,15 @@ def enrich_holdings_with_quotes(
         latest_close = quote.get("close")
         pre_market_price = quote.get("pre_market_price")
         post_market_price = quote.get("post_market_price")
+        night_session_price = quote.get("night_session_price", post_market_price)
         shares = float(holding["shares"])
-        cost_basis = float(holding["cost_basis"])
+        raw_cost_basis = float(holding["cost_basis"])
+        cost_basis, cost_basis_sanity_warning = sanitize_cost_basis_against_market_price(
+            raw_cost_basis,
+            market_price,
+            holding_ticker,
+        )
+        cost_basis = float(cost_basis if cost_basis is not None else raw_cost_basis)
         side = str(holding.get("side") or "LONG").upper()
         direction = 1.0 if side == "LONG" else -1.0
         market_value = market_price * shares if market_price is not None else None
@@ -389,15 +404,20 @@ def enrich_holdings_with_quotes(
         enriched.append(
             {
                 **holding,
+                "cost_basis": cost_basis,
+                "raw_cost_basis": raw_cost_basis,
                 "market_price": market_price,
                 "latest_close": latest_close,
                 "pre_market_price": pre_market_price,
                 "post_market_price": post_market_price,
+                "night_session_price": night_session_price,
                 "market_value": market_value,
                 "net_exposure": net_exposure,
                 "cost_value": cost_value,
                 "pnl": pnl,
                 "pnl_pct": pnl_pct,
+                "cost_basis_sanitized": bool(cost_basis_sanity_warning),
+                "cost_basis_sanity_warning": cost_basis_sanity_warning,
                 "market_session": quote.get("session_label"),
                 "session_change_pct": quote.get("session_change_pct"),
                 "quote_as_of": quote.get("as_of"),

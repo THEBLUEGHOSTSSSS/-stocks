@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -9,6 +10,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from alpha_researcher import get_academic_alpha_digest
+from arbitrage_scanner import arbitrage_opportunities_to_candidates, scan_graph_arbitrage_candidates
 from config import (
     AAOX_UNDERLYING,
     ACCOUNT_FILE,
@@ -45,7 +48,9 @@ from data.macro import get_macro_snapshot
 from data.options import get_near_term_options_summary
 from data.radar import scan_breakout_candidates
 from data.sentiment import build_news_features
+from math_engine import build_market_neutral_math_snapshot
 from models.kelly import continuous_kelly
+from models.options_advisor import build_hk_yingli_execution_guide, plot_option_payoff, suggest_option_strategies
 from models.regime import classify_market_regime, detect_breakdown_signal, detect_sigma_event
 from models.signals import calculate_rolling_alpha, build_candidate_trade_profile, build_trade_profile, should_force_observe
 from portfolio.account import compute_account_overview, compute_short_margin_profile, load_account_state, save_account_state
@@ -63,6 +68,7 @@ from portfolio.holdings import (
     save_holdings,
     save_holdings_snapshot,
 )
+from portfolio.ticker_relationships import expand_universe_with_related_tickers, get_ticker_relationship_profile
 from reports.generator import build_execution_payload, build_markdown_report, save_report_bundle
 from walk_forward_validation import (
     WalkForwardValidator,
@@ -75,17 +81,30 @@ from walk_forward_validation import (
 st.set_page_config(page_title="美股量化半自动助手", layout="wide")
 
 
+DOCS_ROOT = Path(__file__).resolve().parent
+PRINCIPLES_DOC_PATH = DOCS_ROOT / "PRINCIPLES.md"
+USAGE_DOC_PATH = DOCS_ROOT / "USAGE.md"
+
+
 SIDE_LABELS = {
     "LONG": "多头",
     "SHORT": "空头",
     "FLAT": "空仓",
 }
 
+EXECUTION_DIRECTION_LABELS = {
+    "BUY": "买入",
+    "SELL": "卖出",
+    "SELL_SHORT": "卖空",
+    "BUY_TO_COVER": "买入回补",
+    "HOLD": "无操作",
+}
+
 REGIME_BILINGUAL_LABELS = {
-    "Risk-On": "风险偏好 / Risk-On",
-    "Risk-Off": "风险规避 / Risk-Off",
-    "Choppy": "震荡市 / Choppy",
-    "Range": "区间整理 / Range",
+    "Risk-On": "风险偏好",
+    "Risk-Off": "风险规避",
+    "Choppy": "震荡市",
+    "Range": "区间整理",
 }
 
 SIGNAL_LABELS = {
@@ -114,8 +133,47 @@ FACTOR_SET_DISPLAY_LABELS = {
     "momentum_20d_plus_vol_adjusted": "旧复合 / 20日动量+波动率调整",
     "momentum_60d_plus_vol_adjusted": "旧复合 / 60日动量+波动率调整",
     "core_without_momentum": "无动量核心",
-    "momentum_10d_core": "10日动量核心",
-    "momentum_60d_shadow": "60日动量对照",
+    "momentum_60d_core": "60日动量核心",
+    "rsi_minimalist_reversion": "趋势过滤 RSI 低吸",
+}
+
+RESEARCH_THEME_LABELS = {
+    "momentum": "动量",
+    "mean_reversion": "均值回归",
+    "volatility": "波动率",
+    "options_flow": "期权流",
+    "liquidity": "流动性",
+    "macro": "宏观",
+    "cross_asset": "跨资产联动",
+    "earnings": "财报漂移",
+}
+
+RESEARCH_STATUS_LABELS = {
+    "ok": "已完成",
+    "error": "抓取失败",
+}
+
+STAT_ARB_SIGNAL_LABELS = {
+    "LONG": "做多回归",
+    "SHORT": "做空回归",
+    "FLAT": "未触发",
+}
+
+DISPLAY_TEXT_REPLACEMENTS = {
+    "Risk-On": "风险偏好",
+    "Risk-Off": "风险规避",
+    "Choppy": "震荡市",
+    "Range": "区间整理",
+    "High": "高",
+    "Medium": "中",
+    "Low": "低",
+    "event": "事件专家",
+    "trend": "趋势专家",
+    "reversion": "回归专家",
+    "relative_strength": "相对强弱",
+    "breakout": "突破",
+    "momentum": "动量",
+    "mean_reversion": "均值回归",
 }
 
 
@@ -130,6 +188,27 @@ def _format_regime_label(label: Any) -> str:
     if not normalized:
         return ""
     return REGIME_BILINGUAL_LABELS.get(normalized, normalized)
+
+
+def _display_trade_direction(value: Any) -> Any:
+    normalized = str(value or "").strip().upper()
+    if not normalized:
+        return value
+    return EXECUTION_DIRECTION_LABELS.get(normalized, SIDE_LABELS.get(normalized, value))
+
+
+def _resolve_execution_direction(signal: Any, position_side: Any) -> str:
+    normalized_signal = str(signal or "").strip().upper()
+    normalized_side = str(position_side or "LONG").strip().upper()
+    if normalized_signal == "ADD":
+        return "BUY"
+    if normalized_signal == "ADD_SHORT":
+        return "SELL_SHORT"
+    if normalized_signal == "COVER":
+        return "BUY_TO_COVER"
+    if normalized_signal in {"REDUCE", "LIQUIDATE"}:
+        return "BUY_TO_COVER" if normalized_side == "SHORT" else "SELL"
+    return "HOLD"
 
 
 def _ensure_custom_ticker_registry_loaded() -> None:
@@ -171,6 +250,42 @@ def _format_factor_set_frame(frame: pd.DataFrame) -> pd.DataFrame:
         if column in formatted.columns:
             formatted[column] = formatted[column].map(_format_factor_set_label)
     return formatted
+
+
+def _format_research_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return "未知"
+    return RESEARCH_STATUS_LABELS.get(normalized, str(value))
+
+
+def _format_research_theme(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    return RESEARCH_THEME_LABELS.get(normalized, normalized)
+
+
+def _format_research_themes(value: Any) -> str:
+    if isinstance(value, list):
+        return " / ".join(_format_research_theme(item) for item in value if item)
+    return _format_research_theme(value)
+
+
+def _format_stat_arb_signal(value: Any) -> str:
+    normalized = str(value or "").strip().upper()
+    if not normalized:
+        return "未触发"
+    return STAT_ARB_SIGNAL_LABELS.get(normalized, normalized)
+
+
+def _localize_display_text(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    localized = value
+    for english, chinese in DISPLAY_TEXT_REPLACEMENTS.items():
+        localized = localized.replace(english, chinese)
+    return localized
 
 
 def _ticker_meta(ticker: str) -> dict[str, str]:
@@ -435,16 +550,19 @@ def _display_holdings_frame(
             "side": "方向",
             "shares": "股数",
             "cost_basis": "成本价",
+            "raw_cost_basis": "原始成本价",
             "notes": "备注",
             "market_price": "最新价",
             "latest_close": "最新收盘价",
             "pre_market_price": "盘前价",
-            "post_market_price": "盘后价",
+            "post_market_price": "夜盘价",
             "market_value": "持仓名义金额",
             "net_exposure": "净敞口",
             "cost_value": "成本市值",
             "pnl": "浮盈亏",
             "pnl_pct": "浮盈亏%",
+            "cost_basis_sanitized": "成本价已熔断",
+            "cost_basis_sanity_warning": "成本价熔断说明",
             "market_session": "会话阶段",
             "session_change_pct": "扩展时段涨跌幅%",
             "quote_as_of": "价格抓取时间",
@@ -471,10 +589,24 @@ def _radar_candidate_priority(candidate: dict[str, Any]) -> tuple[float, float, 
     normalized_volume = float(min(max(volume_ratio, 1.0), 2.5))
     high_52w_strength = float(candidate.get("high_52w_strength") or 0.0)
     event_driven_score = float(candidate.get("event_driven_score") or 0.0)
+    relationship_strength = float(candidate.get("relationship_strength") or 0.0)
+    spillover_momentum_score = float(candidate.get("spillover_momentum_score") or 0.0)
+    orthogonal_alpha_score = abs(float(candidate.get("orthogonal_alpha_score") or 0.0))
+    stat_arb_bonus = 0.12 if bool(candidate.get("stat_arb_trigger")) else 0.0
+    graph_signal_score = float(candidate.get("graph_signal_score") or 0.0)
     trend_quality = expected_return * (0.7 + 0.3 * predictive_confidence) * normalized_volume / hist_vol
     return (
         breakout_bonus,
-        trend_quality + target_ev * 4.0 + 0.08 * high_52w_strength + 0.06 * event_driven_score + eligibility_bonus,
+        trend_quality
+        + target_ev * 4.0
+        + 0.08 * high_52w_strength
+        + 0.06 * event_driven_score
+        + 0.05 * relationship_strength
+        + 0.08 * spillover_momentum_score
+        + 0.06 * orthogonal_alpha_score
+        + stat_arb_bonus
+        + 0.08 * graph_signal_score
+        + eligibility_bonus,
         signal_strength,
         predictive_confidence,
         expected_return,
@@ -501,7 +633,8 @@ def _display_holdings_change_frame(change_records: list[dict[str, Any]]) -> pd.D
             "current_cost_basis": "当前成本价",
             "market_price": "当前最新价",
             "pre_market_price": "当前盘前价",
-            "post_market_price": "当前盘后价",
+            "post_market_price": "当前夜盘价",
+            "cost_basis_sanity_warning": "成本价熔断说明",
             "closed_shares": "已了结股数",
             "realized_pnl": "按最新价估算已实现盈亏",
             "closeout_result": "了结结果",
@@ -531,9 +664,20 @@ def _display_snapshot_order_action_frame(records: list[dict[str, Any]]) -> pd.Da
     if not records:
         return pd.DataFrame()
     frame = pd.DataFrame(records).copy()
-    for column in ["previous_side", "position_side", "trade_direction"]:
+    for column in ["previous_side", "position_side"]:
         if column in frame.columns:
             frame[column] = frame[column].map(lambda value: SIDE_LABELS.get(str(value).upper(), value) if value else value)
+    direction_series = None
+    for column in ["execution_direction", "trade_direction"]:
+        if column not in frame.columns:
+            continue
+        source = frame[column]
+        direction_series = source if direction_series is None else direction_series.fillna(source)
+    if direction_series is not None:
+        frame["execution_direction"] = direction_series.map(_display_trade_direction)
+        for legacy_column in ["trade_direction"]:
+            if legacy_column in frame.columns:
+                frame = frame.drop(columns=[legacy_column])
     if "signal" in frame.columns:
         frame["signal"] = frame["signal"].map(lambda value: SIGNAL_LABELS.get(str(value).upper(), value) if value else value)
     return frame.rename(
@@ -545,7 +689,8 @@ def _display_snapshot_order_action_frame(records: list[dict[str, Any]]) -> pd.Da
             "previous_notes": "上次备注",
             "signal": "今日挂单动作",
             "position_side": "当前持仓方向",
-            "trade_direction": "挂单方向",
+            "execution_direction": "执行方向",
+            "trade_direction": "执行方向",
             "suggested_shares": "建议股数",
             "reference_price": "参考价",
             "gate_reason": "门控原因",
@@ -582,7 +727,7 @@ def _display_account_overview_frame(account_overview: dict[str, Any]) -> pd.Data
     field_labels = [
         ("total_equity", "账户总权益"),
         ("market_funds", "市场资金"),
-        ("total_pnl", "总盈利"),
+        ("total_pnl", "总盈利(浮动+已实现)"),
         ("floating_pnl", "浮动盈亏"),
         ("realized_pnl", "已实现盈亏(估算)"),
         ("long_market_value", "多头敞口"),
@@ -662,14 +807,21 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
     mode_value_map = {
         "momentum": "动能延续",
         "neutral": "观望",
+        "liquidate": "RSI 趋势过滤止盈",
         "mean_reversion": "均值回归",
+        "rsi_reversion_long": "RSI 趋势过滤低吸",
         "short_breakdown": "破位沽空",
+        "spillover_momentum": "联动补涨",
+        "stat_arb_reversion": "残差均值回归",
+        "stat_arb_reversion_short": "残差均值回归做空",
+        "stat_arb_reversion_long": "残差均值回归做多",
+        "graph_arbitrage": "图谱套利",
     }
     allocation_regime_map = {
-        "Risk-On": "风险偏好 / Risk-On",
-        "Risk-Off": "风险规避 / Risk-Off",
-        "Choppy": "震荡市 / Choppy",
-        "Range": "区间整理 / Range",
+        "Risk-On": "风险偏好",
+        "Risk-Off": "风险规避",
+        "Choppy": "震荡市",
+        "Range": "区间整理",
     }
     options_flow_signal_map = {
         "neutral": "中性",
@@ -688,8 +840,8 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
         "Low": "低",
     }
     channel_value_map = {
-        "Google News RSS": "Google 新闻 RSS",
-        "Yahoo Finance": "Yahoo Finance 聚合",
+        "Google News RSS": "谷歌新闻 RSS",
+        "Yahoo Finance": "雅虎财经聚合",
         "yfinance.info": "yfinance 实时快照",
         "yfinance.history": "yfinance 历史行情",
         "eastmoney.realtime": "东方财富实时行情",
@@ -720,9 +872,25 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
         if column in frame.columns:
             frame[column] = frame[column].map(lambda value: volatility_penalty_map.get(value, value))
 
-    for column in ["Trade_Direction", "trade_direction", "Position_Side", "position_side"]:
+    for column in ["inference_log", "allocation_reason", "Gate_Reason", "gate_reason", "thesis", "spillover_reason", "stat_arb_reason"]:
+        if column in frame.columns:
+            frame[column] = frame[column].map(_localize_display_text)
+
+    for column in ["Position_Side", "position_side"]:
         if column in frame.columns:
             frame[column] = frame[column].map(lambda value: SIDE_LABELS.get(str(value).upper(), value))
+
+    direction_series = None
+    for column in ["Execution_Direction", "execution_direction", "Trade_Direction", "trade_direction"]:
+        if column not in frame.columns:
+            continue
+        source = frame[column]
+        direction_series = source if direction_series is None else direction_series.fillna(source)
+    if direction_series is not None:
+        frame["Execution_Direction"] = direction_series.map(_display_trade_direction)
+        for legacy_column in ["execution_direction", "Trade_Direction", "trade_direction"]:
+            if legacy_column in frame.columns:
+                frame = frame.drop(columns=[legacy_column])
 
     for column in ["Price_Source", "price_source", "Latest_News_Channel", "latest_news_channel"]:
         if column in frame.columns:
@@ -734,6 +902,12 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
                 lambda value: " + ".join(channel_value_map.get(item, item) for item in value)
                 if isinstance(value, list)
                 else value
+            )
+
+    for column in ["Related_Tickers", "related_tickers", "Related_External_Assets", "related_external_assets"]:
+        if column in frame.columns:
+            frame[column] = frame[column].map(
+                lambda value: " / ".join(str(item) for item in value) if isinstance(value, list) else value
             )
 
     for column in ["Event_Tags", "event_tags"]:
@@ -752,6 +926,7 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
         "earnings_event_block",
         "Earnings_Event_Block",
         "exhaustion_reversal",
+        "stat_arb_trigger",
         "Is_Hard_To_Borrow",
         "is_hard_to_borrow",
         "Prohibit_Short",
@@ -760,13 +935,26 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
         if column in frame.columns:
             frame[column] = frame[column].map(_bool_display)
 
+    # V2.1 在底层同时保留了 legacy 兼容字段和新的 60 日 canonical 字段。
+    # 展示层如果把两者都重命名为同一个中文标题，会让 Streamlit/Arrow 认为存在重复列名。
+    # 这里优先保留新的 60 日字段，并丢弃仅用于兼容旧调用链的别名列。
+    compatibility_shadow_pairs = [
+        ("log_return_10d", "log_return_60d"),
+        ("momentum_core_10d", "momentum_core_60d"),
+    ]
+    for legacy_column, canonical_column in compatibility_shadow_pairs:
+        if legacy_column in frame.columns and canonical_column in frame.columns:
+            frame = frame.drop(columns=[legacy_column])
+
     return frame.rename(
         columns={
             "Ticker": "代码",
             "ticker": "代码",
             "Signal": "信号",
-            "Trade_Direction": "交易方向",
-            "trade_direction": "交易方向",
+            "Execution_Direction": "执行方向",
+            "execution_direction": "执行方向",
+            "Trade_Direction": "执行方向",
+            "trade_direction": "执行方向",
             "Position_Side": "持仓方向",
             "position_side": "持仓方向",
             "Action_Price": "动作价格",
@@ -781,6 +969,10 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
             "Reference_Price": "参考现价",
             "reference_price": "参考现价",
             "close": "收盘价",
+            "log_return_5d": "5日对数收益",
+            "log_return_10d": "60日结构动量",
+            "log_return_60d": "60日结构动量",
+            "log_return_20d": "20日对数收益",
             "Market_Session": "会话阶段",
             "session_label": "会话阶段",
             "Regular_Close": "昨收",
@@ -803,6 +995,35 @@ def _display_orders_frame(orders: list[dict[str, Any]]) -> pd.DataFrame:
             "event_driver": "事件标签",
             "event_tags": "事件标签组",
             "event_driven_score": "事件驱动强度",
+            "relation_group": "关联组",
+            "relation_type": "关联类型",
+            "related_tickers": "关联标的",
+            "related_external_assets": "海外锚点",
+            "related_leader_ticker": "联动龙头",
+            "related_leader_return_5d_pct": "龙头5日涨幅%",
+            "related_leader_return_20d_pct": "龙头20日涨幅%",
+            "related_leader_return_60d_pct": "龙头60日涨幅%",
+            "relationship_logic": "关联逻辑",
+            "relationship_strength": "关联强度",
+            "spillover_momentum_score": "联动动量强度",
+            "spillover_trigger": "联动触发",
+            "spillover_reason": "联动说明",
+            "orthogonal_alpha_score": "正交Alpha分数",
+            "orthogonal_alpha_rank": "正交Alpha排名",
+            "idiosyncratic_return": "特质收益率",
+            "idio_zscore": "特质收益Z分数",
+            "stat_arb_signal": "残差套利方向",
+            "stat_arb_trigger": "残差套利触发",
+            "stat_arb_reason": "残差套利说明",
+            "graph_signal_score": "图谱套利分数",
+            "lead_lag_corr": "先行滞后相关",
+            "lead_lag_bars": "滞后Bar数",
+            "pearson_20d": "20日皮尔逊相关",
+            "pearson_60d": "60日皮尔逊相关",
+            "coint_pvalue": "协整P值",
+            "hedge_beta": "对冲Beta",
+            "spread_zscore": "价差Z分数",
+            "thesis": "套利逻辑",
             "sigma_return_pct": "Sigma日收益%",
             "sigma_z_score": "Sigma Z分数",
             "sigma_2_event": "2Sigma异动",
@@ -964,6 +1185,10 @@ def _build_validated_quote_snapshot(history: pd.DataFrame, ticker: str) -> dict[
     merged["close"] = history_close if history_close is not None else session_close
     merged["market_price"] = session_close if session_close is not None else merged.get("close")
     merged["session_price"] = session_close
+    if merged.get("night_session_price") is None:
+        merged["night_session_price"] = merged.get("post_market_price")
+    if merged.get("extended_session_price") is None:
+        merged["extended_session_price"] = merged.get("pre_market_price") or merged.get("night_session_price")
     merged["reference_price"] = session_quote.get("reference_price") or merged.get("market_price") or merged.get("close")
     if merged.get("previous_close") is None:
         merged["previous_close"] = session_quote.get("previous_close")
@@ -986,19 +1211,334 @@ def _build_core_math_inference(
 ) -> dict[str, dict[str, Any]]:
     inference: dict[str, dict[str, Any]] = {}
     for ticker, expected in expected_map.items():
+        factor_row = factor_map.get(ticker, {})
         inference[ticker] = {
-            "Expected_Return_Log": expected["inference_log"],
-            "Signal_Mode": expected.get("signal_label", "观望"),
-            "Trade_Gate": "允许" if expected.get("eligible_for_risk") else "观望",
-            "Gate_Reason": expected.get("gate_reason", ""),
-            "Target_EV": round(float(expected.get("target_ev") or 0.0), 4),
-            "Win_Rate": round(float(expected.get("win_rate") or 0.0), 4),
-            "Volatility_Penalty": expected["volatility_penalty"],
-            "Target_Weight": f"{expected.get('target_weight', 0.0) * 100:.2f}%",
-            "RSI_14": round(float(factor_map[ticker].get("rsi_14") or 0.0), 2),
-            "ATR_14": round(float(factor_map[ticker].get("atr_14") or 0.0), 2),
+            "推演日志": _localize_display_text(expected["inference_log"]),
+            "信号模式": expected.get("signal_label", "观望"),
+            "风险门控": "允许" if expected.get("eligible_for_risk") else "观望",
+            "门控原因": _localize_display_text(expected.get("gate_reason", "")),
+            "目标EV": round(float(expected.get("target_ev") or 0.0), 4),
+            "胜率": round(float(expected.get("win_rate") or 0.0), 4),
+            "波动率标签": _localize_display_text(expected["volatility_penalty"]),
+            "目标权重": f"{expected.get('target_weight', 0.0) * 100:.2f}%",
+            "收盘价": round(float(factor_row.get("close") or 0.0), 2) if factor_row.get("close") is not None else None,
+            "RSI14": round(float(factor_row.get("rsi_14") or 0.0), 2),
+            "SMA120": round(float(factor_row.get("sma_120") or 0.0), 2) if factor_row.get("sma_120") is not None else None,
+            "趋势过滤": "通过" if expected.get("trend_filter_pass") else "拦截",
+            "趋势原因": _localize_display_text(expected.get("trend_filter_reason", "")),
+            "ATR14": round(float(factor_row.get("atr_14") or 0.0), 2),
+            "正交Alpha": round(float(factor_row.get("orthogonal_alpha_score") or 0.0), 3),
+            "特质收益Z分数": round(float(factor_row.get("idio_zscore") or 0.0), 3),
+            "残差套利方向": _format_stat_arb_signal(factor_row.get("stat_arb_signal", "FLAT")),
         }
     return inference
+
+
+def _display_math_inference_frame(inference: dict[str, dict[str, Any]]) -> pd.DataFrame:
+    if not inference:
+        return pd.DataFrame()
+    return pd.DataFrame.from_dict(inference, orient="index").reset_index(names="代码")
+
+
+def _display_orthogonal_weights_frame(weights: pd.Series) -> pd.DataFrame:
+    frame = weights.sort_values(ascending=False).rename("权重").reset_index()
+    frame.columns = ["因子", "权重"]
+    return frame
+
+
+def _display_residual_signals_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return pd.DataFrame()
+    display = frame.copy()
+    if "stat_arb_signal" in display.columns:
+        display["stat_arb_signal"] = display["stat_arb_signal"].map(_format_stat_arb_signal)
+    if "stat_arb_trigger" in display.columns:
+        display["stat_arb_trigger"] = display["stat_arb_trigger"].map(_bool_display)
+    return display.rename(
+        columns={
+            "ticker": "代码",
+            "idiosyncratic_return": "特质收益率",
+            "idio_zscore": "特质收益Z分数",
+            "stat_arb_signal": "残差套利方向",
+            "stat_arb_trigger": "是否触发",
+            "signal_strength": "信号强度",
+        }
+    )
+
+
+def _display_alpha_research_frame(alpha_research: dict[str, Any]) -> pd.DataFrame:
+    frame = pd.DataFrame(alpha_research.get("actionable_insights") or [])
+    if frame.empty:
+        return pd.DataFrame()
+    if "themes" in frame.columns:
+        frame["themes"] = frame["themes"].map(_format_research_themes)
+    if "risk_filters" in frame.columns:
+        frame["risk_filters"] = frame["risk_filters"].map(lambda value: " / ".join(value) if isinstance(value, list) else value)
+    return frame.rename(
+        columns={
+            "source": "来源",
+            "title": "论文标题",
+            "signal_family": "信号家族",
+            "themes": "主题",
+            "factor_formula": "因子公式",
+            "entry_rule": "入场规则",
+            "exit_rule": "出场规则",
+            "risk_filters": "风控过滤",
+            "summary": "摘要",
+            "published_at": "发布时间",
+            "url": "链接",
+        }
+    )
+
+
+def _display_options_summary_frames(summary: dict[str, Any]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    normalized = summary or {}
+    overview = pd.DataFrame(
+        [
+            {
+                "标的": normalized.get("ticker"),
+                "现价": round(float(normalized.get("spot") or 0.0), 2) if normalized.get("spot") is not None else None,
+                "近月到期日": normalized.get("near_term_expiry"),
+                "距到期天数": normalized.get("near_term_days_to_expiry"),
+                "当前ATM IV": f"{float(normalized.get('atm_iv_current') or 0.0) * 100.0:.1f}%" if normalized.get("atm_iv_current") is not None else None,
+                "52周IV样本数": int(normalized.get("atm_iv_cache_size") or 0),
+                "近月到期数": len(normalized.get("expiries") or []),
+                "看涨总成交量": float(normalized.get("call_volume_total") or 0.0),
+                "看跌总成交量": float(normalized.get("put_volume_total") or 0.0),
+                "看涨/看跌量比": round(float(normalized.get("call_put_volume_ratio") or 0.0), 4) if normalized.get("call_put_volume_ratio") is not None else None,
+            }
+        ]
+    )
+    atm_calls = pd.DataFrame(normalized.get("near_term_atm_calls") or normalized.get("top_calls") or []).rename(
+        columns={
+            "contract_symbol": "合约代码",
+            "strike": "执行价",
+            "premium": "采用权利金",
+            "premium_source": "权利金来源",
+            "last_price": "最新价",
+            "mid_price": "中间价",
+            "bid": "买价",
+            "ask": "卖价",
+            "volume": "成交量",
+            "open_interest": "未平仓量",
+            "implied_volatility": "自算IV",
+            "raw_implied_volatility": "原始IV",
+            "distance_dollar": "距现价",
+            "days_to_expiry": "DTE",
+            "expiry": "到期日",
+        }
+    )
+    atm_puts = pd.DataFrame(normalized.get("near_term_atm_puts") or normalized.get("top_puts") or []).rename(
+        columns={
+            "contract_symbol": "合约代码",
+            "strike": "执行价",
+            "premium": "采用权利金",
+            "premium_source": "权利金来源",
+            "last_price": "最新价",
+            "mid_price": "中间价",
+            "bid": "买价",
+            "ask": "卖价",
+            "volume": "成交量",
+            "open_interest": "未平仓量",
+            "implied_volatility": "自算IV",
+            "raw_implied_volatility": "原始IV",
+            "distance_dollar": "距现价",
+            "days_to_expiry": "DTE",
+            "expiry": "到期日",
+        }
+    )
+    for frame in (atm_calls, atm_puts):
+        if "自算IV" in frame.columns:
+            frame["自算IV"] = frame["自算IV"].map(lambda value: f"{float(value) * 100.0:.1f}%" if value is not None and pd.notna(value) else None)
+        if "原始IV" in frame.columns:
+            frame["原始IV"] = frame["原始IV"].map(lambda value: f"{float(value) * 100.0:.1f}%" if value is not None and pd.notna(value) else None)
+    return overview, atm_calls, atm_puts
+
+
+def _format_breakeven_points(values: list[float] | tuple[float, ...] | None) -> str:
+    if not values:
+        return "无"
+    return " / ".join(f"{float(value):.2f}" for value in values)
+
+
+def _infer_option_levels(spot: float, factor_row: dict[str, Any]) -> tuple[float, float, float]:
+    atr = _safe_quote_float(factor_row.get("atr_14")) or max(spot * 0.03, 1.0)
+    hist_vol = _safe_quote_float(factor_row.get("hist_vol_20d")) or 0.35
+    moving_averages = [
+        value
+        for value in (
+            _safe_quote_float(factor_row.get("sma_20")),
+            _safe_quote_float(factor_row.get("sma_60")),
+            _safe_quote_float(factor_row.get("sma_120")),
+        )
+        if value is not None and value > 0.0
+    ]
+    support_candidates = [value for value in moving_averages if value <= spot * 1.02]
+    resistance_candidates = [value for value in moving_averages if value >= spot * 0.98]
+    support = max(support_candidates) if support_candidates else max(spot - 2.0 * atr, spot * 0.92, 0.01)
+    resistance = max(resistance_candidates) if resistance_candidates else max(spot + 2.0 * atr, spot * 1.08)
+    if resistance <= spot:
+        resistance = max(spot + atr, spot * 1.05)
+    if support >= spot:
+        support = max(min(spot * 0.96, support - atr), 0.01)
+    implied_move_pct = max(hist_vol * np.sqrt(30.0 / 252.0), abs(resistance - support) / max(spot, 1e-6) / 2.0, 0.04)
+    return float(support), float(resistance), float(implied_move_pct)
+
+
+def _build_options_oracle_payload(
+    ticker: str,
+    quote_map: dict[str, dict[str, Any]],
+    factor_map: dict[str, dict[str, Any]],
+    options_summary_map: dict[str, dict[str, Any]],
+    holding_profiles: dict[str, dict[str, Any]],
+    holdings_enriched: list[dict[str, Any]],
+) -> dict[str, Any]:
+    normalized_ticker = str(ticker or "").strip().upper()
+    quote = quote_map.get(normalized_ticker, {})
+    factor_row = factor_map.get(normalized_ticker, {})
+    profile = holding_profiles.get(normalized_ticker, {})
+    spot = _safe_quote_float(quote.get("market_price") or quote.get("close") or factor_row.get("close"))
+    if spot is None or spot <= 0.0:
+        return {}
+
+    support, resistance, implied_move_pct = _infer_option_levels(float(spot), factor_row)
+    options_summary = options_summary_map.get(normalized_ticker, {})
+    session_change_pct = _safe_quote_float(quote.get("session_change_pct"))
+    sma_120 = _safe_quote_float(factor_row.get("sma_120"))
+    historical_volatility = _safe_quote_float(factor_row.get("hist_vol_20d"))
+    days_to_earnings = profile.get("days_to_earnings")
+    market_option_snapshots: list[dict[str, Any]] = []
+    expiry_days_to_expiry = _safe_quote_float(options_summary.get("near_term_days_to_expiry"))
+    call_bucket = list(options_summary.get("near_term_atm_calls") or [])
+    put_bucket = list(options_summary.get("near_term_atm_puts") or [])
+    if not call_bucket and not put_bucket:
+        call_bucket = list(options_summary.get("top_calls") or [])
+        put_bucket = list(options_summary.get("top_puts") or [])
+    for option_type, bucket in (("call", call_bucket), ("put", put_bucket)):
+        for raw in bucket:
+            strike = _safe_quote_float(raw.get("strike"))
+            premium = _safe_quote_float(raw.get("premium") or raw.get("mid_price") or raw.get("last_price"))
+            if strike is None or strike <= 0.0 or premium is None or premium <= 0.0:
+                continue
+            market_option_snapshots.append(
+                {
+                    "option_type": option_type,
+                    "strike": strike,
+                    "premium": premium,
+                    "days_to_expiry": _safe_quote_float(raw.get("days_to_expiry")) or expiry_days_to_expiry,
+                }
+            )
+
+    iv_history = options_summary.get("atm_iv_history_52w")
+    earnings_days_to_expiry = _safe_quote_float(days_to_earnings)
+    candidate_days_to_expiry = expiry_days_to_expiry if expiry_days_to_expiry is not None else earnings_days_to_expiry
+    resolved_days_to_expiry = float(np.clip(candidate_days_to_expiry if candidate_days_to_expiry is not None else 30.0, 7.0, 60.0))
+    has_shares = any(
+        str(item.get("ticker") or "").strip().upper() == normalized_ticker
+        and str(item.get("side") or "LONG").upper() == "LONG"
+        and float(item.get("shares") or 0.0) > 0.0
+        for item in holdings_enriched
+    )
+    breakdown_risk = bool(profile.get("knife_catch_block")) or bool(sma_120 is not None and float(spot) <= float(sma_120))
+    event_risk = bool(days_to_earnings is not None and days_to_earnings <= 5) or bool(session_change_pct is not None and abs(float(session_change_pct)) >= 4.0)
+    oracle = suggest_option_strategies(
+        normalized_ticker,
+        float(spot),
+        support,
+        resistance,
+        has_shares=has_shares,
+        breakdown_risk=breakdown_risk,
+        event_risk=event_risk,
+        implied_move_pct=implied_move_pct,
+        historical_volatility=historical_volatility,
+        iv_history=iv_history,
+        market_option_snapshots=market_option_snapshots,
+        risk_free_rate=RISK_FREE_RATE,
+        days_to_expiry=resolved_days_to_expiry,
+    )
+    oracle["days_to_earnings"] = days_to_earnings
+    oracle["session_label"] = quote.get("session_label")
+    oracle["session_change_pct"] = session_change_pct
+    oracle["call_put_volume_ratio"] = options_summary.get("call_put_volume_ratio")
+    oracle["near_term_expiry"] = options_summary.get("near_term_expiry")
+    oracle["atm_iv_cache_size"] = options_summary.get("atm_iv_cache_size")
+    return oracle
+
+
+def _display_options_oracle_frame(oracle: dict[str, Any]) -> pd.DataFrame:
+    strategies = oracle.get("strategies") or []
+    if not strategies:
+        return pd.DataFrame()
+    return pd.DataFrame(
+        [
+            {
+                "策略": strategy.get("name"),
+                "推荐级别": "优先" if strategy.get("is_primary") else "备选",
+                "当前IV": f"{float(strategy.get('current_iv_pct') or 0.0):.1f}%",
+                "IVR": f"{float(strategy.get('iv_rank') or 0.0):.1f}",
+                "波动环境": strategy.get("volatility_regime"),
+                "适用场景": strategy.get("scenario"),
+                "人类建议": strategy.get("summary"),
+                "最大盈利": strategy.get("max_profit"),
+                "最大亏损": strategy.get("max_loss"),
+                "盈亏平衡点": _format_breakeven_points(strategy.get("breakeven_points")),
+            }
+            for strategy in strategies
+        ]
+    )
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_markdown_doc(path_str: str) -> str:
+    path = Path(path_str)
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return f"# 文档不存在\n\n未找到 {path.name}。"
+
+
+def _render_upgrade_summary() -> None:
+    st.info(
+        "\n".join(
+            [
+                "本次升级内容：",
+                "1. 接入行情异常值熔断，极端报价不会再直接污染信号。",
+                "2. 新增 SVD/PCA 数学引擎，核心页会显示正交因子权重和残差均值回归。",
+                "3. 新增图谱套利扫描，异动雷达会额外展示联动套利候选。",
+                "4. 学术 Alpha 摘要已并入主页面和报告，不再是独立模块。",
+                "5. 页面新增“原理与使用”页签，直接同步 PRINCIPLES.md 和 USAGE.md。",
+            ]
+        )
+    )
+
+
+def _render_docs_tab() -> None:
+    st.subheader("原理与使用")
+    st.caption("这里直接同步项目根目录下的 PRINCIPLES.md 和 USAGE.md，方便你在页面里确认本次升级已经落地。")
+    principles_markdown = _load_markdown_doc(str(PRINCIPLES_DOC_PATH))
+    usage_markdown = _load_markdown_doc(str(USAGE_DOC_PATH))
+    summary_tab, principles_tab, usage_tab = st.tabs(["升级摘要", "原理说明", "使用说明"])
+    with summary_tab:
+        st.markdown(
+            "\n".join(
+                [
+                    "### 本页会看到什么",
+                    "1. 当前版本新增了异常值熔断、SVD/PCA 数学引擎、图谱套利扫描和学术 Alpha 摘要。",
+                    "2. 页面里的“执行方向”已经统一，不再只是表格层改名。",
+                    "3. 文档与页面同步展示，后续修改 Markdown 可以直接在这里确认。",
+                ]
+            )
+        )
+    with principles_tab:
+        st.markdown(principles_markdown)
+    with usage_tab:
+        st.markdown(usage_markdown)
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _load_alpha_research_digest(refresh_token: str = "") -> dict[str, Any]:
+    _ = refresh_token
+    return get_academic_alpha_digest(max_papers=8)
 
 
 def _allocation_strength(expected_return_5d: float, win_rate: float) -> float:
@@ -1155,8 +1695,8 @@ def _legacy_order_for_ticker(
 
     if session_label == "盘前" and session_change_pct is not None and abs(float(session_change_pct)) >= 2.0:
         session_impact = "盘前价格偏离昨收较大，执行价与止损已按盘前价重算。"
-    elif session_label == "盘后" and session_change_pct is not None and abs(float(session_change_pct)) >= 2.0:
-        session_impact = "盘后波动较大，次日开盘前建议复核。"
+    elif session_label in {"盘后", "夜盘"} and session_change_pct is not None and abs(float(session_change_pct)) >= 2.0:
+        session_impact = "夜盘波动较大，次日开盘前建议复核。"
     elif session_label == "盘中":
         session_impact = "盘中价格实时变化，执行价为当前会话参考价。"
     else:
@@ -1164,12 +1704,14 @@ def _legacy_order_for_ticker(
 
     if ticker == "AAOX":
         should_liquidate = bool((breakdown_signal or {}).get("breakdown")) or regime["score"] < 0.4
+        signal = "LIQUIDATE" if should_liquidate else "HOLD"
         hard_stop_loss = close * 0.93 if close else None
         return {
             "Ticker": ticker,
-            "Signal": "LIQUIDATE" if should_liquidate else "HOLD",
+            "Signal": signal,
             "Position_Side": position_side,
-            "Trade_Direction": position_side,
+            "Execution_Direction": _resolve_execution_direction(signal, position_side),
+            "Trade_Direction": _resolve_execution_direction(signal, position_side),
             "Reference_Price": round(close, 2) if close else None,
             "Market_Session": session_label,
             "Regular_Close": round(float(regular_close), 2) if regular_close else None,
@@ -1193,20 +1735,22 @@ def _legacy_order_for_ticker(
     if position_side == "SHORT":
         if earnings_event_block:
             signal = "COVER"
-        elif signal_mode == "short_breakdown" and not observe_mode and expected_profile.get("eligible_for_risk"):
-            signal = "ADD_SHORT"
-        elif expected_return_5d > 0.015 or regime["score"] > 0.55 or signal_mode in {"momentum", "mean_reversion"}:
+        elif signal_mode == "rsi_reversion_long":
+            signal = "COVER"
+        elif expected_return_5d > 0.015 or regime["score"] > 0.55 or signal_mode in {"momentum", "mean_reversion", "liquidate"}:
             signal = "COVER"
         else:
             signal = "HOLD_SHORT"
     else:
         if earnings_event_block:
             signal = "LIQUIDATE"
+        elif signal_mode == "liquidate":
+            signal = "LIQUIDATE"
         elif expected_return_5d < -0.015 or regime["score"] < 0.35:
             signal = "REDUCE"
         elif observe_mode or not expected_profile.get("eligible_for_risk"):
             signal = "HOLD"
-        elif signal_mode == "momentum" and expected_return_5d > 0.02:
+        elif signal_mode == "rsi_reversion_long" and expected_return_5d > 0.02:
             signal = "ADD"
         else:
             signal = "HOLD"
@@ -1255,7 +1799,8 @@ def _legacy_order_for_ticker(
         "Ticker": ticker,
         "Signal": signal,
         "Position_Side": position_side,
-        "Trade_Direction": "SHORT" if signal in {"ADD_SHORT", "COVER", "HOLD_SHORT"} else "LONG",
+        "Execution_Direction": _resolve_execution_direction(signal, position_side),
+        "Trade_Direction": _resolve_execution_direction(signal, position_side),
         "Reference_Price": round(close, 2) if close else None,
         "Market_Session": session_label,
         "Regular_Close": round(float(regular_close), 2) if regular_close else None,
@@ -1314,8 +1859,8 @@ def _build_new_alpha_targets(
             session_impact = "盘前跳空较大，目标价已按盘前价重算，避免直接追高。"
         elif session_label == "盘前" and session_change_pct is not None and float(session_change_pct) <= -2.5:
             session_impact = "盘前向下跳空较大，空头挂单价已按盘前价重算，避免追空过度。"
-        elif session_label == "盘后" and session_change_pct is not None and abs(float(session_change_pct)) >= 2.0:
-            session_impact = "盘后波动明显，次日开盘前需再次确认承接。"
+        elif session_label in {"盘后", "夜盘"} and session_change_pct is not None and abs(float(session_change_pct)) >= 2.0:
+            session_impact = "夜盘波动明显，次日开盘前需再次确认承接。"
         elif session_label == "盘中":
             session_impact = "盘中价格实时变化，挂单价需预留滑点。"
         else:
@@ -1354,6 +1899,7 @@ def _build_new_alpha_targets(
             {
                 "Ticker": candidate["ticker"],
                 "Signal": signal,
+                "Execution_Direction": trade_direction,
                 "Trade_Direction": trade_direction,
                 "Reference_Price": round(reference_price, 2) if reference_price else None,
                 "Market_Session": session_label,
@@ -1384,6 +1930,29 @@ def _build_new_alpha_targets(
                 "event_driver": candidate.get("event_driver"),
                 "event_tags": candidate.get("event_tags"),
                 "event_driven_score": candidate.get("event_driven_score"),
+                "related_leader_ticker": candidate.get("related_leader_ticker"),
+                "related_leader_return_5d_pct": candidate.get("related_leader_return_5d_pct"),
+                "related_leader_return_20d_pct": candidate.get("related_leader_return_20d_pct"),
+                "related_leader_return_60d_pct": candidate.get("related_leader_return_60d_pct"),
+                "spillover_momentum_score": candidate.get("spillover_momentum_score"),
+                "spillover_trigger": candidate.get("spillover_trigger"),
+                "spillover_reason": candidate.get("spillover_reason"),
+                "orthogonal_alpha_score": candidate.get("orthogonal_alpha_score"),
+                "orthogonal_alpha_rank": candidate.get("orthogonal_alpha_rank"),
+                "idiosyncratic_return": candidate.get("idiosyncratic_return"),
+                "idio_zscore": candidate.get("idio_zscore"),
+                "stat_arb_signal": candidate.get("stat_arb_signal"),
+                "stat_arb_trigger": candidate.get("stat_arb_trigger"),
+                "stat_arb_reason": candidate.get("stat_arb_reason"),
+                "graph_signal_score": candidate.get("graph_signal_score"),
+                "lead_lag_corr": candidate.get("lead_lag_corr"),
+                "lead_lag_bars": candidate.get("lead_lag_bars"),
+                "pearson_20d": candidate.get("pearson_20d"),
+                "pearson_60d": candidate.get("pearson_60d"),
+                "coint_pvalue": candidate.get("coint_pvalue"),
+                "hedge_beta": candidate.get("hedge_beta"),
+                "spread_zscore": candidate.get("spread_zscore"),
+                "thesis": candidate.get("thesis") or candidate.get("signal_reason"),
                 "Target_EV": round(float(candidate.get("target_ev") or 0.0), 4),
                 "Win_Rate": round(float(candidate.get("win_rate") or 0.0), 4),
                 "Signal_Mode": candidate.get("signal_label", "观望"),
@@ -1417,7 +1986,7 @@ def _build_quant_logic_log(
         parts.append("NVDA 2σ")
     if aaoi_breakdown.get("breakdown"):
         parts.append("AAOI破位")
-    return " / ".join(parts) or "量价与波动未触发极端阈值"
+    return _localize_display_text(" / ".join(parts) or "量价与波动未触发极端阈值")
 
 
 def _run_walk_forward_backtest(holding_tickers: tuple[str, ...]) -> dict[str, Any]:
@@ -1432,28 +2001,12 @@ def _run_walk_forward_backtest(holding_tickers: tuple[str, ...]) -> dict[str, An
             ],
         }
     )
-    pruned_factors = [
-        "log_return_5d",
-        "log_return_20d",
-        "volatility_adjusted_momentum_20d",
-        "volatility_adjusted_momentum_60d",
-    ]
     factor_cols = [
-        "hist_vol_20d",
-        "volume_ratio_20d",
         "rsi_14",
-        "relative_strength_20d_vs_benchmark",
+        "hist_vol_20d",
     ]
     factor_study_sets = {
-        "core_without_momentum": factor_cols,
-        "momentum_10d_core": [
-            *factor_cols,
-            "log_return_10d",
-        ],
-        "momentum_60d_shadow": [
-            *factor_cols,
-            "log_return_60d",
-        ],
+        "rsi_minimalist_reversion": factor_cols,
     }
     robustness_random_states = [11, 23, 37, 41, 53, 67, 79, 97]
     robustness_fold_offsets = [0, 3, 6, 9, 12, 15, 18, 21]
@@ -1466,7 +2019,7 @@ def _run_walk_forward_backtest(holding_tickers: tuple[str, ...]) -> dict[str, An
         "search_method": "random",
         "n_iter": 32,
         "transaction_cost_bps": 2.0,
-        "pruned_factors": pruned_factors,
+        "signal_engine": "趋势过滤 RSI 低吸",
         "factor_cols": factor_cols,
         "robustness_random_states": robustness_random_states,
         "robustness_fold_offsets": robustness_fold_offsets,
@@ -1552,15 +2105,11 @@ def _run_robustness_study(holding_tickers: tuple[str, ...]) -> dict[str, Any]:
         }
     )
     factor_cols = [
-        "hist_vol_20d",
-        "volume_ratio_20d",
         "rsi_14",
-        "relative_strength_20d_vs_benchmark",
+        "hist_vol_20d",
     ]
     factor_study_sets = {
-        "core_without_momentum": factor_cols,
-        "momentum_10d_core": [*factor_cols, "log_return_10d"],
-        "momentum_60d_shadow": [*factor_cols, "log_return_60d"],
+        "rsi_minimalist_reversion": factor_cols,
     }
     random_states = [11, 23, 37, 41, 53, 67, 79, 97]
     fold_offsets = [0, 3, 6, 9, 12, 15, 18, 21]
@@ -1588,10 +2137,6 @@ def _run_robustness_study(holding_tickers: tuple[str, ...]) -> dict[str, Any]:
         search_method="random",
         n_iter=24,
         transaction_cost_bps=2.0,
-        comparison_pairs=[
-            ("momentum_10d_core", "core_without_momentum"),
-            ("momentum_10d_core", "momentum_60d_shadow"),
-        ],
     )
     return study
 
@@ -1610,6 +2155,31 @@ def run_analysis_pipeline(holding_tickers: tuple[str, ...], kelly_fraction: floa
         benchmark_history = None if ticker == "QQQ" else qqq_history
         factor_map[ticker] = build_factor_snapshot(history, benchmark_history)
         news_map[ticker] = build_news_features(get_news_items(ticker, limit=8))
+
+    qqq_features = factor_map.get("QQQ", {})
+    qqq_close = qqq_features.get("close")
+    qqq_sma_60 = qqq_features.get("sma_60")
+    benchmark_above_sma_60 = bool(
+        qqq_close is not None
+        and qqq_sma_60 is not None
+        and pd.notna(qqq_close)
+        and pd.notna(qqq_sma_60)
+        and float(qqq_sma_60) > 0.0
+        and float(qqq_close) >= float(qqq_sma_60)
+    )
+    for ticker in tracked_tickers:
+        factor_map.setdefault(ticker, {}).update(
+            {
+                "benchmark_ticker": "QQQ",
+                "benchmark_close": qqq_close,
+                "benchmark_sma_60": qqq_sma_60,
+                "benchmark_above_sma_60": benchmark_above_sma_60,
+            }
+        )
+
+    math_snapshot = build_market_neutral_math_snapshot(factor_map, histories, tracked_tickers)
+    for ticker, math_features in math_snapshot.signal_map.items():
+        factor_map.setdefault(ticker, {}).update(math_features)
 
     macro_snapshot = get_macro_snapshot()
     vix_value = float((macro_snapshot.get("vix") or {}).get("value") or 0.0) or None
@@ -1672,9 +2242,13 @@ def run_analysis_pipeline(holding_tickers: tuple[str, ...], kelly_fraction: floa
         )
 
     options_summary = get_near_term_options_summary(OPTIONS_TICKER)
+    radar_universe = expand_universe_with_related_tickers(
+        RADAR_UNIVERSE + list(holding_tickers) + list(decision_tickers),
+        metadata=TICKER_METADATA,
+    )
     raw_radar_candidates = scan_breakout_candidates(
-        RADAR_UNIVERSE,
-        max_candidates=len(RADAR_UNIVERSE),
+        radar_universe,
+        max_candidates=len(radar_universe),
         regime_score=regime["score"],
         vix_value=vix_value,
     )
@@ -1698,14 +2272,58 @@ def run_analysis_pipeline(holding_tickers: tuple[str, ...], kelly_fraction: floa
                 "latest_news_time": candidate_news.get("latest_published_at"),
                 "latest_news_age_hours": candidate_news.get("latest_age_hours"),
                 "latest_headline": candidate_news.get("latest_headline"),
+                **get_ticker_relationship_profile(ticker, metadata=TICKER_METADATA),
             }
         )
         radar_candidates.append(candidate_profile)
-    radar_candidates = sorted(
-        radar_candidates,
+
+    try:
+        graph_opportunities = scan_graph_arbitrage_candidates(radar_universe)
+    except Exception:
+        graph_opportunities = pd.DataFrame()
+    graph_arbitrage_candidates: list[dict[str, Any]] = []
+    for candidate in arbitrage_opportunities_to_candidates(graph_opportunities):
+        ticker = str(candidate.get("ticker") or "").upper()
+        if not ticker:
+            continue
+        session_quote = get_market_session_quote(ticker)
+        candidate_news = build_news_features(get_news_items(ticker, limit=5))
+        candidate_profile = candidate.copy()
+        candidate_profile.update(
+            {
+                "reference_price": session_quote.get("reference_price") or candidate.get("reference_price") or candidate.get("close"),
+                "regular_close": session_quote.get("regular_close") or candidate.get("regular_close") or candidate.get("close"),
+                "session_label": session_quote.get("session_label"),
+                "session_change_pct": session_quote.get("session_change_pct"),
+                "price_as_of": session_quote.get("as_of"),
+                "price_source": session_quote.get("price_source") or candidate.get("price_source"),
+                "latest_news_publisher": candidate_news.get("latest_publisher"),
+                "latest_news_channel": candidate_news.get("latest_source_channel"),
+                "news_channels": candidate_news.get("news_channels"),
+                "latest_news_time": candidate_news.get("latest_published_at"),
+                "latest_news_age_hours": candidate_news.get("latest_age_hours"),
+                "latest_headline": candidate_news.get("latest_headline"),
+                **get_ticker_relationship_profile(ticker, metadata=TICKER_METADATA),
+            }
+        )
+        graph_arbitrage_candidates.append(candidate_profile)
+
+    ranked_candidates = sorted(
+        radar_candidates + graph_arbitrage_candidates,
         key=_radar_candidate_priority,
         reverse=True,
-    )[:5]
+    )
+    deduped_candidates: list[dict[str, Any]] = []
+    seen_tickers: set[str] = set()
+    for candidate in ranked_candidates:
+        ticker = str(candidate.get("ticker") or "").upper()
+        if not ticker or ticker in seen_tickers:
+            continue
+        deduped_candidates.append(candidate)
+        seen_tickers.add(ticker)
+        if len(deduped_candidates) >= 5:
+            break
+    radar_candidates = deduped_candidates
     trade_reference_profiles = {**core_signal_profiles, **holding_profiles}
     observe_mode, observe_reason = should_force_observe(trade_reference_profiles, radar_candidates, regime["score"])
 
@@ -1758,7 +2376,14 @@ def run_analysis_pipeline(holding_tickers: tuple[str, ...], kelly_fraction: floa
         "aaoi_breakdown": aaoi_breakdown,
         "kelly": kelly_result,
         "options_summary": options_summary,
+        "math_engine": {
+            "orthogonal_weights": math_snapshot.orthogonal_weights,
+            "orthogonal_scores": math_snapshot.orthogonal_scores,
+            "residual_signals": math_snapshot.residual_signals,
+            "residual_explained_variance_ratio": math_snapshot.residual_explained_variance_ratio,
+        },
         "radar_candidates": radar_candidates,
+        "graph_arbitrage_candidates": graph_arbitrage_candidates,
         "observe_mode": observe_mode,
         "observe_reason": observe_reason,
         "walk_forward_backtest": None,
@@ -1770,6 +2395,7 @@ def run_analysis_pipeline(holding_tickers: tuple[str, ...], kelly_fraction: floa
 
 st.title("美股量化半自动助手")
 st.caption("本地采集公开数据，生成信号与报告。所有下单由你自行决定。")
+_render_upgrade_summary()
 
 saved_holdings = load_holdings(HOLDINGS_FILE)
 saved_holdings_history = load_holdings_history(HOLDINGS_HISTORY_FILE)
@@ -1834,6 +2460,9 @@ if st.session_state.get("analysis_signature") == analysis_signature:
 
 if analysis is not None:
     holdings_reference_snapshot = resolve_reference_snapshot(holdings, saved_holdings_history)
+    if "alpha_research_refresh_token" not in st.session_state:
+        st.session_state["alpha_research_refresh_token"] = ""
+    alpha_research = _load_alpha_research_digest(str(st.session_state.get("alpha_research_refresh_token") or ""))
     quote_map = analysis["quote_map"]
     holdings_change_records = build_holdings_change_records(
         holdings,
@@ -1844,6 +2473,13 @@ if analysis is not None:
     snapshot_order_action_records: list[dict[str, Any]] = []
     holdings_history_rows = build_holdings_history_summary(saved_holdings_history, limit=12)
     holdings_enriched = enrich_holdings_with_quotes(holdings, quote_map)
+    holding_cost_basis_warnings = sorted(
+        {
+            str(item.get("cost_basis_sanity_warning"))
+            for item in holdings_enriched
+            if item.get("cost_basis_sanity_warning")
+        }
+    )
     short_borrow_metrics = {
         item["ticker"]: get_short_borrow_metrics(item["ticker"])
         for item in holdings_enriched
@@ -1858,11 +2494,13 @@ if analysis is not None:
     core_signal_profiles = analysis["core_signal_profiles"]
     holding_profiles = analysis["holding_profiles"]
     factor_map = analysis["factor_map"]
+    math_engine_output = analysis.get("math_engine") or {}
     sigma_events = analysis["sigma_events"]
     aaoi_breakdown = analysis["aaoi_breakdown"]
     regime = analysis["regime"]
     observe_mode = bool(analysis.get("observe_mode"))
     observe_reason = str(analysis.get("observe_reason") or "")
+    graph_arbitrage_candidates = analysis.get("graph_arbitrage_candidates") or []
 
     legacy_orders: list[dict[str, Any]] = []
     remaining_cash = float(account_overview.get("idle_cash") or 0.0)
@@ -1929,6 +2567,12 @@ if analysis is not None:
             for warning in data_warnings:
                 st.write(f"- {warning}")
 
+    if holding_cost_basis_warnings:
+        st.warning("检测到持仓成本价脏数据，本次分析已按现价熔断重置，避免盈亏和仓位计算失真。")
+        with st.expander("查看成本价熔断记录", expanded=False):
+            for warning in holding_cost_basis_warnings:
+                st.write(f"- {warning}")
+
     display_regime = {
         **regime,
         "label": _format_regime_label(regime.get("label")),
@@ -1939,13 +2583,14 @@ if analysis is not None:
     top_mid.metric("风险偏好分数", f"{regime['score']:.2f}")
     top_right.metric("总建议风险敞口", f"{analysis['kelly']['total_exposure'] * 100:.1f}%")
 
-    budget_col1, budget_col2, budget_col3, budget_col4, budget_col5, budget_col6 = st.columns(6)
+    budget_col1, budget_col2, budget_col3, budget_col4, budget_col5, budget_col6, budget_col7 = st.columns(7)
     budget_col1.metric("账户总权益", f"${account_overview['total_equity']:,.0f}")
     budget_col2.metric("市场资金", f"${account_overview['market_funds']:,.0f}")
-    budget_col3.metric("总盈利", f"${account_overview['total_pnl']:,.0f}")
-    budget_col4.metric("闲余资金", f"${account_overview['idle_cash']:,.0f}")
-    budget_col5.metric("多头敞口", f"${account_overview['long_market_value']:,.0f}")
-    budget_col6.metric("空头敞口", f"${account_overview['short_market_value']:,.0f}")
+    budget_col3.metric("持仓浮动盈亏", f"${account_overview['floating_pnl']:,.0f}")
+    budget_col4.metric("已实现盈亏", f"${account_overview['realized_pnl']:,.0f}")
+    budget_col5.metric("总盈利", f"${account_overview['total_pnl']:,.0f}")
+    budget_col6.metric("闲余资金", f"${account_overview['idle_cash']:,.0f}")
+    budget_col7.metric("多/空敞口", f"${account_overview['long_market_value']:,.0f} / ${account_overview['short_market_value']:,.0f}")
 
     if observe_mode:
         st.warning(f"当前触发空仓/观望强约束：{observe_reason}")
@@ -1959,17 +2604,136 @@ if analysis is not None:
     if not isinstance(backtest, dict):
         backtest = analysis.get("walk_forward_backtest") or {}
 
-    overview_tab, holdings_tab, radar_tab, backtest_tab, report_tab = st.tabs(["核心信号", "持仓盈亏", "异动雷达", "样本外回测", "报告与JSON"])
+    overview_tab, holdings_tab, radar_tab, backtest_tab, report_tab, docs_tab = st.tabs(["核心信号", "持仓盈亏", "异动雷达", "样本外回测", "报告与JSON", "原理与使用"])
 
     with overview_tab:
         st.subheader("核心指数信号")
         st.caption("这里默认用 SPY、QQQ、DIA、IWM 判断大盘与风格状态；个股信号请看持仓页。")
-        st.dataframe(pd.DataFrame.from_dict(mathematical_inference, orient="index"), use_container_width=True)
+        st.dataframe(_display_math_inference_frame(mathematical_inference), use_container_width=True)
+        orthogonal_weights = math_engine_output.get("orthogonal_weights")
+        if isinstance(orthogonal_weights, pd.Series) and not orthogonal_weights.empty:
+            st.subheader("SVD 正交化因子权重")
+            st.dataframe(_display_orthogonal_weights_frame(orthogonal_weights), use_container_width=True)
+        residual_signals = math_engine_output.get("residual_signals")
+        if isinstance(residual_signals, pd.DataFrame) and not residual_signals.empty:
+            st.subheader("PCA 残差均值回归")
+            st.dataframe(_display_residual_signals_frame(residual_signals.head(12)), use_container_width=True)
+        st.subheader("学术 Alpha 摘要")
+        if str(alpha_research.get("status") or "") == "ok":
+            st.caption(str(alpha_research.get("summary") or "近期未形成稳定论文聚焦主题"))
+            research_insights = _display_alpha_research_frame(alpha_research)
+            if not research_insights.empty:
+                selected_columns = [
+                    column
+                    for column in ["来源", "论文标题", "信号家族", "主题", "因子公式", "入场规则", "出场规则", "摘要"]
+                    if column in research_insights.columns
+                ]
+                st.dataframe(research_insights[selected_columns], use_container_width=True)
+        else:
+            st.info(f"学术 Alpha 抓取当前不可用：{alpha_research.get('error') or '未返回结果'}")
         st.subheader("期权流")
-        st.json(analysis["options_summary"])
+        options_overview_frame, top_calls_frame, top_puts_frame = _display_options_summary_frames(analysis["options_summary"])
+        st.dataframe(options_overview_frame, use_container_width=True)
+        options_col1, options_col2 = st.columns(2)
+        with options_col1:
+            st.caption("近月 ATM 看涨链")
+            st.dataframe(top_calls_frame, use_container_width=True)
+        with options_col2:
+            st.caption("近月 ATM 看跌链")
+            st.dataframe(top_puts_frame, use_container_width=True)
+        with st.expander("查看期权流原始结构", expanded=False):
+            st.json(analysis["options_summary"])
+        st.subheader("期权策略预言机")
+        default_oracle_ticker = str(analysis["options_summary"].get("ticker") or OPTIONS_TICKER).upper()
+        oracle_tickers = sorted(
+            {default_oracle_ticker}.union(
+                {
+                    str(item.get("ticker") or "").upper()
+                    for item in holdings_enriched
+                    if item.get("ticker")
+                }
+            )
+        )
+        selected_oracle_ticker = st.selectbox(
+            "选择期权预言机标的",
+            options=oracle_tickers,
+            index=oracle_tickers.index(default_oracle_ticker) if default_oracle_ticker in oracle_tickers else 0,
+            key="options_oracle_ticker",
+        )
+        oracle_payload = _build_options_oracle_payload(
+            selected_oracle_ticker,
+            quote_map,
+            factor_map,
+            signal_options_data,
+            holding_profiles,
+            holdings_enriched,
+        )
+        if oracle_payload:
+            context_parts = [
+                f"现价 ${float(oracle_payload['spot']):.2f}",
+                f"支撑 ${float(oracle_payload['support']):.2f}",
+                f"阻力 ${float(oracle_payload['resistance']):.2f}",
+                f"30日波动代理 {float(oracle_payload['implied_move_pct']) * 100.0:.1f}%",
+                f"当前 IV {float(oracle_payload.get('current_iv_pct') or 0.0):.1f}%",
+                f"IVR {float(oracle_payload.get('iv_rank') or 0.0):.1f}",
+            ]
+            if oracle_payload.get("days_to_earnings") is not None:
+                context_parts.append(f"距财报 {int(oracle_payload['days_to_earnings'])} 个交易日")
+            if oracle_payload.get("session_label"):
+                context_parts.append(f"当前会话 {oracle_payload['session_label']}")
+            if oracle_payload.get("session_change_pct") is not None:
+                context_parts.append(f"扩展时段 {float(oracle_payload['session_change_pct']):.2f}%")
+            if oracle_payload.get("call_put_volume_ratio") is not None:
+                context_parts.append(f"Call/Put 成交量比 {float(oracle_payload['call_put_volume_ratio']):.2f}")
+            if oracle_payload.get("near_term_expiry"):
+                context_parts.append(f"近月到期 {oracle_payload['near_term_expiry']}")
+            if oracle_payload.get("atm_iv_cache_size") is not None:
+                context_parts.append(f"IV缓存样本 {int(oracle_payload['atm_iv_cache_size'])}")
+            st.caption(" · ".join(context_parts))
+
+            strategies = oracle_payload.get("strategies") or []
+            primary_strategy = next((item for item in strategies if item.get("is_primary")), strategies[0] if strategies else None)
+            if primary_strategy:
+                st.info(
+                    f"当前优先建议：{primary_strategy.get('name')}。{primary_strategy.get('summary')}"
+                    f" {str(oracle_payload.get('iv_regime_reason') or '').strip()}"
+                )
+            oracle_frame = _display_options_oracle_frame(oracle_payload)
+            if not oracle_frame.empty:
+                st.dataframe(oracle_frame, use_container_width=True)
+            if strategies:
+                strategy_names = [str(item.get("name") or "") for item in strategies]
+                selected_strategy_name = st.radio(
+                    "选择到期盈亏图策略",
+                    options=strategy_names,
+                    index=strategy_names.index(str(primary_strategy.get("name") or "")) if primary_strategy and str(primary_strategy.get("name") or "") in strategy_names else 0,
+                    horizontal=True,
+                    key=f"options_oracle_strategy_{selected_oracle_ticker}",
+                )
+                selected_strategy = next((item for item in strategies if item.get("name") == selected_strategy_name), primary_strategy)
+                if selected_strategy:
+                    st.caption(str(selected_strategy.get("rationale") or ""))
+                    broker_guide = build_hk_yingli_execution_guide(selected_strategy)
+                    with st.expander(str(broker_guide.get("title") or "查看香港盈立证券下单步骤"), expanded=False):
+                        st.caption("下单前检查")
+                        for index, step in enumerate(list(broker_guide.get("preflight") or []), start=1):
+                            st.write(f"{index}. {step}")
+                        st.caption("具体下单步骤")
+                        for index, step in enumerate(list(broker_guide.get("execution_steps") or []), start=1):
+                            st.write(f"{index}. {step}")
+                        st.caption("成交后管理")
+                        for index, step in enumerate(list(broker_guide.get("position_management") or []), start=1):
+                            st.write(f"{index}. {step}")
+                    st.plotly_chart(
+                        plot_option_payoff(selected_strategy, spot=float(oracle_payload["spot"])),
+                        use_container_width=True,
+                    )
+        else:
+            st.info("当前标的缺少有效价格或趋势数据，暂时无法生成期权预言机建议。")
 
     with holdings_tab:
         st.subheader("账户资金概览")
+        st.caption("券商里的“持仓盈亏”通常对应这里的“持仓浮动盈亏”；“总盈利”会额外包含基于历史快照估算的已实现盈亏。")
         st.dataframe(_display_account_overview_frame(account_overview), use_container_width=True)
         borrow_summary_frame = _display_borrow_summary_frame(account_overview)
         if not borrow_summary_frame.empty:
@@ -2011,6 +2775,9 @@ if analysis is not None:
     with radar_tab:
         st.subheader("全市场异动雷达")
         st.dataframe(_display_orders_frame(analysis["radar_candidates"]), use_container_width=True)
+        if graph_arbitrage_candidates:
+            st.subheader("图谱套利候选")
+            st.dataframe(_display_orders_frame(graph_arbitrage_candidates), use_container_width=True)
         st.subheader("新 Alpha 目标")
         st.dataframe(_display_orders_frame(new_alpha_targets), use_container_width=True)
 
@@ -2032,10 +2799,10 @@ if analysis is not None:
         else:
             metrics = backtest.get("metrics") or {}
             metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
-            metric_col1.metric("Sharpe", f"{float(metrics.get('sharpe') or 0.0):.2f}")
-            metric_col2.metric("Max Drawdown", f"{float(metrics.get('max_drawdown') or 0.0):.2%}")
-            metric_col3.metric("Calmar", f"{float(metrics.get('calmar') or 0.0):.2f}")
-            metric_col4.metric("Annualized Return", f"{float(metrics.get('annualized_return') or 0.0):.2%}")
+            metric_col1.metric("夏普比率", f"{float(metrics.get('sharpe') or 0.0):.2f}")
+            metric_col2.metric("最大回撤", f"{float(metrics.get('max_drawdown') or 0.0):.2%}")
+            metric_col3.metric("卡玛比率", f"{float(metrics.get('calmar') or 0.0):.2f}")
+            metric_col4.metric("年化收益", f"{float(metrics.get('annualized_return') or 0.0):.2%}")
 
             equity_curve = backtest.get("equity_curve")
             if isinstance(equity_curve, pd.DataFrame) and not equity_curve.empty:
@@ -2049,7 +2816,7 @@ if analysis is not None:
 
             fold_summary = backtest.get("fold_summary")
             if isinstance(fold_summary, pd.DataFrame) and not fold_summary.empty:
-                st.subheader("Fold 汇总")
+                st.subheader("分段回测汇总")
                 st.dataframe(fold_summary, use_container_width=True)
 
         st.divider()
@@ -2173,10 +2940,33 @@ if analysis is not None:
         kelly_weights=analysis["kelly"]["weights"],
         quant_logic_log=quant_logic_log,
         walk_forward_validation=payload_backtest,
+        alpha_research=alpha_research,
     )
     markdown = build_markdown_report(payload)
 
     with report_tab:
+        refresh_col, _ = st.columns([1, 3])
+        with refresh_col:
+            if st.button("刷新学术 Alpha 摘要", use_container_width=True):
+                st.session_state["alpha_research_refresh_token"] = str(uuid4())
+                st.rerun()
+        st.subheader("学术 Alpha 研究结果")
+        research_payload_frame = _display_alpha_research_frame(alpha_research)
+        research_status_col1, research_status_col2, research_status_col3 = st.columns(3)
+        research_status_col1.metric("抓取状态", _format_research_status(alpha_research.get("status")))
+        research_status_col2.metric("论文数量", str(int(alpha_research.get("paper_count") or 0)))
+        research_status_col3.metric("主题数量", str(len(alpha_research.get("theme_counts") or {})))
+        if research_payload_frame.empty:
+            st.info(str(alpha_research.get("summary") or alpha_research.get("error") or "当前没有可展示的研究摘要"))
+        else:
+            selected_columns = [
+                column
+                for column in ["来源", "论文标题", "信号家族", "主题", "因子公式", "入场规则", "出场规则", "摘要"]
+                if column in research_payload_frame.columns
+            ]
+            st.dataframe(research_payload_frame[selected_columns], use_container_width=True)
+        with st.expander("查看学术 Alpha 原始结构", expanded=False):
+            st.json(payload.get("Academic_Alpha_Research") or {})
         st.subheader("Markdown 报告预览")
         st.code(markdown, language="markdown")
         st.subheader("JSON 执行单")
@@ -2194,5 +2984,9 @@ if analysis is not None:
                 mime="application/json",
                 use_container_width=True,
             )
+
+    with docs_tab:
+        _render_docs_tab()
 else:
     st.info("左侧录入持仓后，点击“运行分析”开始抓取数据。")
+    _render_docs_tab()

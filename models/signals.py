@@ -10,29 +10,26 @@ from models.regime import classify_factor_allocation_regime
 
 
 GLOBAL_OBSERVE_REGIME_THRESHOLD = 0.34
+RSI_REVERSAL_BUY_THRESHOLD = 35.0
+RSI_REVERSAL_SELL_THRESHOLD = 70.0
+RSI_TREND_FILTER_LOOKBACK = 120
+RSI_REVERSAL_BASE_EV = 0.02
+RSI_REVERSAL_EV_MULTIPLIER = 0.002
+RSI_NEUTRAL_BLOCK_EV = -0.01
+RSI_LIQUIDATE_EV = -0.05
 STRATEGY_THRESHOLDS = {
-    "momentum": {
-        "min_regime_score": 0.48,
+    "rsi_reversion_long": {
+        "min_regime_score": 0.0,
         "min_expected_return_5d": 0.02,
-        "min_ev": 0.006,
-        "min_win_rate": 0.57,
-        "min_payoff_ratio": 1.05,
-    },
-    "short_breakdown": {
-        "min_regime_score": 0.4,
-        "min_expected_return_5d": 0.018,
-        "min_ev": 0.005,
-        "min_win_rate": 0.56,
-        "min_payoff_ratio": 1.0,
-    },
-    "mean_reversion": {
-        "min_regime_score": 0.42,
-        "min_expected_return_5d": 0.015,
-        "min_ev": 0.004,
-        "min_win_rate": 0.58,
-        "min_payoff_ratio": 0.85,
+        "min_ev": 0.0,
+        "min_win_rate": 0.45,
+        "min_payoff_ratio": 0.70,
     },
 }
+
+
+def _is_rsi_reversion_signal_mode(signal_mode: str) -> bool:
+    return signal_mode == "rsi_reversion_long"
 
 
 def _clip_feature(value: float, scale: float, lower: float = -1.0, upper: float = 1.0) -> float:
@@ -52,10 +49,87 @@ def _coerce_finite_float(value: Any, default: float = 0.0) -> float:
 
 
 def _resolve_momentum_core(market_features: dict[str, Any]) -> dict[str, float]:
-    log_return_10d = _coerce_finite_float(market_features.get("log_return_10d"), 0.0)
+    del market_features
     return {
-        "log_return_10d": log_return_10d,
-        "momentum_term": _clip_feature(log_return_10d, 0.08),
+        "log_return_60d": 0.0,
+        "momentum_term": 0.0,
+    }
+
+
+def _resolve_breakout_flag(market_features: dict[str, Any]) -> bool:
+    del market_features
+    return False
+
+
+def _resolve_rsi_trend_filter(market_features: dict[str, Any]) -> dict[str, Any]:
+    close = _coerce_finite_float(market_features.get("close"), np.nan)
+    sma_120 = _coerce_finite_float(market_features.get("sma_120"), np.nan)
+    if not np.isfinite(close) or not np.isfinite(sma_120) or sma_120 <= 0.0:
+        return {
+            "trend_filter_pass": False,
+            "knife_catch_block": True,
+            "trend_filter_reason": f"{RSI_TREND_FILTER_LOOKBACK} 日均线数据不足，禁止接飞刀式抄底",
+        }
+    if close > sma_120:
+        return {
+            "trend_filter_pass": True,
+            "knife_catch_block": False,
+            "trend_filter_reason": f"close={close:.2f} > sma_120={sma_120:.2f}，通过 {RSI_TREND_FILTER_LOOKBACK} 日趋势过滤",
+        }
+    return {
+        "trend_filter_pass": False,
+        "knife_catch_block": True,
+        "trend_filter_reason": f"close={close:.2f} <= sma_120={sma_120:.2f}，判定为接飞刀风险，禁止低吸",
+    }
+
+
+def _resolve_rsi_reversion_signal_mode(market_features: dict[str, Any]) -> dict[str, Any]:
+    rsi_14 = _coerce_finite_float(market_features.get("rsi_14"), 50.0)
+    trend_state = _resolve_rsi_trend_filter(market_features)
+    if rsi_14 < RSI_REVERSAL_BUY_THRESHOLD:
+        if not trend_state["trend_filter_pass"]:
+            return {
+                "signal_mode": "neutral",
+                "signal_label": "观望",
+                "signal_reason": str(
+                    market_features.get("signal_reason")
+                    or (
+                        f"rsi_14={rsi_14:.1f} < {RSI_REVERSAL_BUY_THRESHOLD:.0f}，但 {trend_state['trend_filter_reason']}，"
+                        "V2.5 趋势过滤 RSI 低吸判定为接飞刀，强制观望"
+                    )
+                ),
+                **trend_state,
+            }
+        return {
+            "signal_mode": "rsi_reversion_long",
+            "signal_label": "RSI 趋势过滤低吸",
+            "signal_reason": str(
+                market_features.get("signal_reason")
+                or (
+                    f"rsi_14={rsi_14:.1f} < {RSI_REVERSAL_BUY_THRESHOLD:.0f}，且 {trend_state['trend_filter_reason']}，"
+                    "执行 V2.5 趋势过滤 RSI 低吸"
+                )
+            ),
+            **trend_state,
+        }
+    if rsi_14 >= RSI_REVERSAL_SELL_THRESHOLD:
+        return {
+            "signal_mode": "liquidate",
+            "signal_label": "RSI 趋势过滤止盈",
+            "signal_reason": str(
+                market_features.get("signal_reason")
+                or f"rsi_14={rsi_14:.1f} >= {RSI_REVERSAL_SELL_THRESHOLD:.0f}，进入贪婪止盈区，强制收缩仓位"
+            ),
+            **trend_state,
+        }
+    return {
+        "signal_mode": "neutral",
+        "signal_label": "观望",
+        "signal_reason": (
+            f"rsi_14={rsi_14:.1f} 位于 {RSI_REVERSAL_BUY_THRESHOLD:.0f}-{RSI_REVERSAL_SELL_THRESHOLD:.0f} 之间，"
+            "V2.5 趋势过滤 RSI 低吸策略强制管住手"
+        ),
+        **trend_state,
     }
 
 
@@ -200,7 +274,7 @@ def detect_exhaustion_reversal(market_features: dict[str, Any]) -> dict[str, Any
         if rsi_14 >= 70.0:
             reasons.append("RSI处于过热区")
         if momentum_term >= 0.85:
-            reasons.append("10日动量过热")
+            reasons.append("60日动量过热")
         if hist_vol_20d >= 0.65:
             reasons.append("20日波动率偏高")
         if volume_ratio < 1.0:
@@ -212,7 +286,7 @@ def detect_exhaustion_reversal(market_features: dict[str, Any]) -> dict[str, Any
         }
 
     if upside_blowoff:
-        reasons = ["单日逼空拉升", "RSI进入极热区", "10日动量过热"]
+        reasons = ["单日逼空拉升", "RSI进入极热区", "60日动量过热"]
         if volume_ratio >= 2.5:
             reasons.append("天量疑似高位派发")
         reason = " / ".join(reasons[:4])
@@ -630,271 +704,123 @@ def estimate_expected_return(
     vix_value: float | None = None,
     options_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    momentum_core = _resolve_momentum_core(market_features)
+    del ticker, news_features, options_data
     hist_vol_20d = float(market_features.get("hist_vol_20d") or 0.0)
-    relative_strength = float(market_features.get("relative_strength_20d_vs_benchmark") or market_features.get("relative_strength") or 0.0)
-    daily_return_pct = float(market_features.get("daily_return_pct") or 0.0)
-    breakout = 1.0 if (market_features.get("breakout_20d") or market_features.get("breakout_valid")) else 0.0
-    exhaustion_signal = detect_exhaustion_reversal(market_features)
-    expert_context = estimate_expert_context(market_features, news_features, regime_score)
-    uncertainty = estimate_predictive_uncertainty(market_features, news_features, regime_score, expert_context)
+    orthogonal_alpha_score = float(market_features.get("orthogonal_alpha_score") or 0.0)
+    idio_zscore = float(market_features.get("idio_zscore") or 0.0)
+    rsi_14 = _coerce_finite_float(market_features.get("rsi_14"), 50.0)
+    signal_mode = _resolve_rsi_reversion_signal_mode(market_features)
+    rsi_reversion_active = _is_rsi_reversion_signal_mode(signal_mode["signal_mode"])
+    knife_catch_block = bool(signal_mode.get("knife_catch_block"))
     allocation_regime = classify_factor_allocation_regime(regime_score, vix_value)
-    dynamic_weights = get_dynamic_weights(str(allocation_regime["label"]), hist_vol_20d)
-    breakout_valid = bool(market_features.get("breakout_valid"))
-    short_trend_confirmed = bool(
-        market_features.get("short_trend_confirmed")
-        or market_features.get("breakdown")
-        or str(market_features.get("trade_direction") or "").upper() == "SHORT"
-    )
-    options_edge = _build_options_edge(options_data, breakout_valid, short_trend_confirmed)
-    relative_strength_term = _clip_feature(relative_strength, 0.15)
-    momentum_filter = _assess_momentum_rsi_filter(market_features, breakout_valid, relative_strength_term)
-    volume_divergence = _assess_volume_divergence(market_features, breakout_valid)
-    volatility_gate = _assess_volatility_gate(
-        hist_vol_20d,
-        breakout_valid,
-        short_trend_confirmed,
-        str(allocation_regime["label"]),
-        float(momentum_core["momentum_term"]),
-    )
-
-    momentum_release_multiplier = float(momentum_filter["release_multiplier"]) * float(volatility_gate["release_multiplier"])
-    momentum_term = float(momentum_core["momentum_term"]) * momentum_release_multiplier
-    breakout_term = breakout * momentum_release_multiplier
-    sentiment_component = float(news_features.get("activated_sentiment") or 0.0)
-    shock_component = _clip_feature(float(news_features.get("shock_score") or 0.0), 4.0)
-    headline_density = _clip_feature(float(news_features.get("headline_count") or 0.0), 8.0, lower=0.0, upper=1.0)
-
-    # RSI is deliberately excluded from the additive score stack. It only gates momentum release.
-    price_factor_component = (
-        dynamic_weights["momentum"] * momentum_term
-        + dynamic_weights["relative_strength"] * relative_strength_term
-        + dynamic_weights["breakout"] * breakout_term
-    )
-    news_component = (
-        dynamic_weights["sentiment_component"] * sentiment_component
-        + dynamic_weights["shock_component"] * shock_component
-        + dynamic_weights["headline_density"] * headline_density
-    )
-    base_market_component = price_factor_component + news_component
-    expert_blend = {
-        "Risk-On": 0.26,
-        "Choppy": 0.22,
-        "Risk-Off": 0.36,
-    }.get(str(allocation_regime["label"]), 0.28)
-    market_component = (1.0 - expert_blend) * base_market_component + expert_blend * float(expert_context["expert_consensus"])
-
-    # The regression alpha is estimated on daily returns, so rescale it to the 5-day forecast horizon.
     resolved_alpha = float(rolling_alpha) if rolling_alpha is not None and np.isfinite(rolling_alpha) else 0.0
-    alpha_component_5d = resolved_alpha * 5.0
-    if allocation_regime["label"] == "Risk-On":
-        regime_bias = 0.006 + (regime_score - 0.5) * 0.025
-        synergy = 0.012 if breakout_term and sentiment_component > 0 else 0.0
-    elif allocation_regime["label"] == "Risk-Off":
-        regime_bias = -0.008 + (regime_score - 0.5) * 0.015
-        synergy = 0.004 if sentiment_component > 0.2 and shock_component >= 0.0 else 0.0
-    else:
-        regime_bias = (regime_score - 0.5) * 0.008
-        synergy = 0.004 if breakout_term and relative_strength_term > -0.2 else 0.0
-    reversal_penalty = 0.0
-    if exhaustion_signal["exhaustion_reversal"]:
-        reversal_penalty -= min(abs(daily_return_pct) / 100.0 * 0.4, 0.045)
-        if hist_vol_20d >= 0.65:
-            reversal_penalty -= 0.008
-        if float(market_features.get("volume_ratio_20d") or market_features.get("volume_ratio") or 1.0) < 1.0:
-            reversal_penalty -= 0.005
-        if float(market_features.get("volume_ratio_20d") or market_features.get("volume_ratio") or 1.0) >= 2.5:
-            reversal_penalty -= 0.01
-    reversal_penalty += float(momentum_filter["reversal_penalty"])
-    reversal_penalty += float(volume_divergence["reversal_penalty"])
-    reversal_penalty += float(options_edge["reversal_penalty_delta"])
-    reversal_penalty += float(volatility_gate["penalty"])
+    adjusted_ev = RSI_NEUTRAL_BLOCK_EV
+    effective_uncertainty_score = 0.95
+    effective_predictive_confidence = 0.05
+    effective_prediction_interval_5d = 0.12
+    rsi_reversion_alpha_bonus_5d = 0.0
+    if signal_mode["signal_mode"] == "liquidate":
+        adjusted_ev = RSI_LIQUIDATE_EV
+        effective_uncertainty_score = 0.18
+        effective_predictive_confidence = 0.82
+        effective_prediction_interval_5d = 0.025
+    elif rsi_reversion_active:
+        oversold_gap = float(max(RSI_REVERSAL_BUY_THRESHOLD - rsi_14, 0.0))
+        # V2.5 趋势过滤 RSI 低吸：只有超卖且站上 120 日均线时才给正 EV。
+        adjusted_ev = float(np.clip(RSI_REVERSAL_BASE_EV + oversold_gap * RSI_REVERSAL_EV_MULTIPLIER, 0.02, 0.08))
+        rsi_reversion_alpha_bonus_5d = adjusted_ev
+        effective_uncertainty_score = float(np.clip(0.34 - 0.012 * oversold_gap, 0.08, 0.34))
+        effective_predictive_confidence = float(np.clip(1.0 - effective_uncertainty_score, 0.66, 0.92))
+        effective_prediction_interval_5d = float(np.clip(0.036 - 0.0015 * oversold_gap, 0.012, 0.036))
+    elif knife_catch_block:
+        adjusted_ev = min(RSI_NEUTRAL_BLOCK_EV, -0.02)
+        effective_uncertainty_score = 0.88
+        effective_predictive_confidence = 0.12
+        effective_prediction_interval_5d = 0.08
 
-    effective_uncertainty_score = float(np.clip(float(uncertainty["uncertainty_score"]) - float(options_edge["confidence_delta"]), 0.0, 1.0))
-    effective_predictive_confidence = float(np.clip(1.0 - effective_uncertainty_score, 0.05, 0.99))
-    prediction_interval_multiplier = float(np.clip(1.0 - 0.5 * float(options_edge["confidence_delta"]), 0.7, 1.35))
-    effective_prediction_interval_5d = float(
-        np.clip(float(uncertainty["prediction_interval_5d"]) * prediction_interval_multiplier, 0.01, 0.12)
-    )
-
-    uncertainty_penalty = float(
-        effective_prediction_interval_5d
-        * (0.08 + 0.18 * uncertainty["expert_disagreement_score"])
-    )
-
-    raw_expected_return_5d = (
-        alpha_component_5d
-        + 0.055 * market_component
-        + regime_bias
-        + synergy
-        + float(options_edge["options_edge"])
-    )
-    confidence_shrink = 0.7 + 0.3 * effective_predictive_confidence
-    expected_return_5d = raw_expected_return_5d * confidence_shrink + reversal_penalty - uncertainty_penalty
-    if momentum_filter["blowoff_top_block"]:
-        expected_return_5d = min(expected_return_5d, -0.008)
-    expected_return_5d = float(np.clip(expected_return_5d, -0.12, 0.15))
-    dominant_dynamic_factor = max(dynamic_weights, key=lambda factor_name: abs(dynamic_weights[factor_name]))
-
-    if momentum_filter["blowoff_top_block"]:
-        driver = "RSI 过热阻断主导"
-    elif volatility_gate["block"]:
-        driver = "高波动门控主导"
-    elif volume_divergence["distribution_risk"]:
-        driver = "放量派发抑制主导"
-    elif exhaustion_signal["exhaustion_reversal"]:
-        driver = "过热反转风控主导"
-    elif uncertainty["predictive_confidence"] < 0.45:
-        driver = "不确定性抑制主导"
-    elif abs(price_factor_component) >= abs(news_component):
-        driver = "量价因子主导"
-    else:
-        driver = "消息情绪主导"
-    if options_edge["options_flow_signal"] == "gamma_squeeze":
-        driver = "期权逼空主导"
-    elif options_edge["options_flow_signal"] == "put_divergence":
-        driver = "期权背离抑制主导"
-    elif options_edge["options_flow_signal"] == "put_panic_short":
-        driver = "Put 恐慌空头延续主导"
     inference_log = (
-        f"{driver}，配置状态 {allocation_regime['label']}，5日EV {expected_return_5d:.2%}，"
-        f"置信度 {effective_predictive_confidence:.0%}，"
-        f"主导专家 {expert_context['dominant_expert']}，"
-        f"主导权重 {dominant_dynamic_factor}"
+        f"V2.5 趋势过滤 RSI 低吸 / 配置状态 {allocation_regime['label']} / "
+        f"rsi_14 {rsi_14:.1f} / idio_zscore {idio_zscore:.2f} / adjusted_ev {adjusted_ev:.2%} / "
+        f"{signal_mode['signal_reason']}"
     )
 
     return {
-        "expected_return_5d": expected_return_5d,
-        "expected_return_5d_raw": raw_expected_return_5d,
-        "expected_return_daily": expected_return_5d / 5.0,
+        "expected_return_5d": adjusted_ev,
+        "expected_return_5d_raw": adjusted_ev,
+        "adjusted_ev": adjusted_ev,
+        "expected_return_daily": adjusted_ev / 5.0,
         "rolling_alpha_daily": resolved_alpha,
-        "momentum_core_10d": float(momentum_core["log_return_10d"]),
-        "alpha_component_5d": alpha_component_5d,
-        "market_component": market_component,
-        "base_market_component": base_market_component,
-        "price_factor_component": price_factor_component,
-        "news_component": news_component,
+        "momentum_core_10d": 0.0,
+        "momentum_core_60d": 0.0,
+        "alpha_component_5d": rsi_reversion_alpha_bonus_5d,
+        "stat_arb_alpha_bonus_5d": 0.0,
+        "idio_momentum_alpha_bonus_5d": 0.0,
+        "rsi_reversion_alpha_bonus_5d": rsi_reversion_alpha_bonus_5d,
+        "market_component": 0.0,
+        "base_market_component": 0.0,
+        "price_factor_component": 0.0,
+        "orthogonal_alpha_score": orthogonal_alpha_score,
+        "orthogonal_alpha_component": 0.0,
+        "idio_zscore": idio_zscore,
+        "rsi_14": rsi_14,
+        "idiosyncratic_component": adjusted_ev,
+        "stat_arb_priority": False,
+        "spillover_component": 0.0,
+        "news_component": 0.0,
         "allocation_regime": allocation_regime["label"],
         "allocation_reason": allocation_regime["reason"],
         "vix_value": allocation_regime["vix_value"],
-        "expert_consensus_blend": expert_blend,
-        "reversal_penalty": reversal_penalty,
-        "uncertainty_penalty": uncertainty_penalty,
+        "trend_filter_pass": bool(signal_mode.get("trend_filter_pass")),
+        "trend_filter_reason": str(signal_mode.get("trend_filter_reason") or ""),
+        "knife_catch_block": knife_catch_block,
+        "expert_consensus_blend": 0.0,
+        "reversal_penalty": 0.0,
+        "uncertainty_penalty": 0.0,
         "volatility_penalty": volatility_penalty_label(hist_vol_20d),
-        "expert_consensus": float(expert_context["expert_consensus"]),
-        "expert_disagreement": float(expert_context["expert_disagreement"]),
-        "dominant_expert": str(expert_context["dominant_expert"]),
-        "expert_weight_trend": float(expert_context["expert_weights"]["trend"]),
-        "expert_weight_reversion": float(expert_context["expert_weights"]["reversion"]),
-        "expert_weight_event": float(expert_context["expert_weights"]["event"]),
-        "dynamic_weight_momentum": float(dynamic_weights["momentum"]),
-        "dynamic_weight_relative_strength": float(dynamic_weights["relative_strength"]),
-        "dynamic_weight_breakout": float(dynamic_weights["breakout"]),
-        "dynamic_weight_rsi_alignment": float(dynamic_weights["rsi_alignment"]),
-        "dynamic_weight_sentiment": float(dynamic_weights["sentiment_component"]),
-        "dynamic_weight_shock": float(dynamic_weights["shock_component"]),
-        "dynamic_weight_headline": float(dynamic_weights["headline_density"]),
-        "dynamic_weight_volatility": float(dynamic_weights["volatility_term"]),
-        "volatility_gate_state": str(volatility_gate["state"]),
-        "volatility_gate_reason": str(volatility_gate["reason"]),
-        "volatility_gate_block": bool(volatility_gate["block"]),
-        "volatility_gate_release_multiplier": float(volatility_gate["release_multiplier"]),
-        "call_put_volume_ratio": options_edge["call_put_volume_ratio"],
-        "options_flow_signal": options_edge["options_flow_signal"],
-        "options_flow_reason": options_edge["options_flow_reason"],
-        "options_edge": float(options_edge["options_edge"]),
-        "options_confidence_delta": float(options_edge["confidence_delta"]),
-        "options_reversal_penalty_delta": float(options_edge["reversal_penalty_delta"]),
-        "options_win_rate_multiplier": float(options_edge["options_win_rate_multiplier"]),
-        "options_win_rate_delta": float(options_edge["options_win_rate_delta"]),
+        "expert_consensus": 1.0 if rsi_reversion_active else 0.0,
+        "expert_disagreement": 0.0,
+        "dominant_expert": "rsi_reversion" if rsi_reversion_active else "risk_control",
+        "expert_weight_trend": 0.0,
+        "expert_weight_reversion": 1.0 if rsi_reversion_active else 0.0,
+        "expert_weight_event": 0.0,
+        "dynamic_weight_momentum": 0.0,
+        "dynamic_weight_relative_strength": 0.0,
+        "dynamic_weight_breakout": 0.0,
+        "dynamic_weight_rsi_alignment": 0.0,
+        "dynamic_weight_sentiment": 0.0,
+        "dynamic_weight_shock": 0.0,
+        "dynamic_weight_headline": 0.0,
+        "dynamic_weight_volatility": 0.0,
+        "volatility_gate_state": "rsi_extreme_only_mode",
+        "volatility_gate_reason": "V2.5 趋势过滤 RSI 低吸：只有 RSI 进入 35 以下且价格站上 SMA120 才允许新增风险暴露",
+        "volatility_gate_block": bool(not rsi_reversion_active),
+        "volatility_gate_release_multiplier": 1.0 if rsi_reversion_active else 0.0,
+        "call_put_volume_ratio": 1.0,
+        "options_flow_signal": "neutral",
+        "options_flow_reason": "V2.5 趋势过滤 RSI 低吸：期权流不再主导买卖方向",
+        "options_edge": 0.0,
+        "options_confidence_delta": 0.0,
+        "options_reversal_penalty_delta": 0.0,
+        "options_win_rate_multiplier": 1.0,
+        "options_win_rate_delta": 0.0,
         **{
-            **uncertainty,
             "uncertainty_score": effective_uncertainty_score,
             "predictive_confidence": effective_predictive_confidence,
             "prediction_interval_5d": effective_prediction_interval_5d,
+            "expert_disagreement_score": 0.0,
+            "routing_uncertainty": 0.0,
+            "crowding_risk": 0.0,
         },
-        **exhaustion_signal,
+        **{
+            "exhaustion_reversal": False,
+            "exhaustion_reason": "",
+        },
         "inference_log": inference_log,
     }
 
 
 def classify_signal_mode(market_features: dict[str, Any]) -> dict[str, str]:
-    rsi_14 = float(market_features.get("rsi_14") or 50.0)
-    momentum_term = float(_resolve_momentum_core(market_features)["momentum_term"])
-    volume_ratio = float(market_features.get("volume_ratio_20d") or 1.0)
-    relative_strength = float(market_features.get("relative_strength_20d_vs_benchmark") or 0.0)
-    breakout = bool(market_features.get("breakout_20d"))
-    daily_return_pct = float(market_features.get("daily_return_pct") or 0.0)
-    close = float(market_features.get("close") or 0.0)
-    sma_20 = float(market_features.get("sma_20") or close or 0.0)
-    strong_intermediate_trend = momentum_term >= 0.9
-    medium_intermediate_trend = momentum_term >= 0.45
-    healthy_rsi = 40.0 <= rsi_14 <= 60.0
-    stretched_rsi = 60.0 < rsi_14 <= 68.0
-
-    # Medium-quality momentum only gets released in a healthy RSI corridor.
-    # Stronger intermediate momentum may survive a mildly stretched RSI, but never a blow-off RSI.
-    if breakout and volume_ratio >= 1.2 and relative_strength >= 0.0 and rsi_14 <= 70.0:
-        if medium_intermediate_trend and healthy_rsi:
-            return {
-                "signal_mode": "momentum",
-                "signal_label": "动能延续",
-                "signal_reason": "10日动量在健康 RSI 区间释放",
-            }
-        if strong_intermediate_trend and (healthy_rsi or stretched_rsi):
-            return {
-                "signal_mode": "momentum",
-                "signal_label": "动能延续",
-                "signal_reason": "10日动量强、相对强度同步确认",
-            }
-
-    if (
-        breakout
-        and strong_intermediate_trend
-        and volume_ratio >= 1.5
-        and relative_strength >= 0.05
-        and 70.0 < rsi_14 <= 76.0
-    ):
-        return {
-            "signal_mode": "momentum",
-            "signal_label": "强趋势延续",
-            "signal_reason": "突破后进入高热区，但趋势与相对强度仍在延续",
-        }
-
-    if (
-        not breakout
-        and daily_return_pct <= -2.0
-        and momentum_term <= -0.55
-        and volume_ratio >= 1.2
-        and relative_strength <= 0.0
-        and close <= sma_20
-        and rsi_14 <= 48.0
-    ):
-        return {
-            "signal_mode": "short_breakdown",
-            "signal_label": "破位沽空",
-            "signal_reason": "10日动量转弱、放量、弱于基准",
-        }
-
-    if (
-        not breakout
-        and rsi_14 <= 35.0
-        and momentum_term <= -0.4
-        and daily_return_pct <= -1.5
-        and close <= sma_20
-        and volume_ratio <= 1.8
-    ):
-        return {
-            "signal_mode": "mean_reversion",
-            "signal_label": "均值回归",
-            "signal_reason": "10日动量过弱，进入超跌反抽观察区",
-        }
-
-    return {
-        "signal_mode": "neutral",
-        "signal_label": "观望",
-        "signal_reason": "未触发动量或均值回归高胜率模板",
-    }
+    return _resolve_rsi_reversion_signal_mode(market_features)
 
 
 def _earnings_event_reason(days_to_earnings: int | None) -> str:
@@ -912,6 +838,7 @@ def evaluate_trade_gate(
     expected_return_5d: float,
     trade_stats: dict[str, Any],
     regime_score: float,
+    signal_reason: str | None = None,
 ) -> dict[str, Any]:
     if trade_stats.get("earnings_event_block"):
         return {
@@ -919,16 +846,22 @@ def evaluate_trade_gate(
             "reason": str(trade_stats.get("earnings_gate_reason") or "财报高危期，强制空仓"),
         }
 
-    if regime_score <= GLOBAL_OBSERVE_REGIME_THRESHOLD:
+    if signal_mode == "liquidate":
         return {
             "eligible": False,
-            "reason": "市场环境过弱，触发空仓/观望约束",
+            "reason": "rsi_14 已进入 70 以上贪婪区，执行止盈/清仓",
         }
 
     if signal_mode == "neutral":
         return {
             "eligible": False,
-            "reason": "未触发历史高胜率模板",
+            "reason": str(signal_reason or "rsi_14 未进入 35 以下极端低吸区，强制观望"),
+        }
+
+    if not _is_rsi_reversion_signal_mode(signal_mode):
+        return {
+            "eligible": False,
+            "reason": "仅允许 RSI 极端超卖低吸进入风险预算",
         }
 
     thresholds = STRATEGY_THRESHOLDS[signal_mode]
@@ -937,7 +870,7 @@ def evaluate_trade_gate(
             "eligible": False,
             "reason": "市场状态不支持新增风险暴露",
         }
-    edge_return_5d = abs(expected_return_5d) if signal_mode == "short_breakdown" else expected_return_5d
+    edge_return_5d = abs(expected_return_5d)
     if edge_return_5d < thresholds["min_expected_return_5d"]:
         return {
             "eligible": False,
@@ -960,7 +893,7 @@ def evaluate_trade_gate(
         }
     return {
         "eligible": True,
-        "reason": "通过高胜率阈值",
+        "reason": "通过 V2.5 趋势过滤 RSI 低吸阈值",
     }
 
 
@@ -975,6 +908,7 @@ def build_trade_profile(
 ) -> dict[str, Any]:
     earnings_event = get_upcoming_earnings(ticker)
     signal_mode = classify_signal_mode(market_features)
+    rsi_reversion_confirmed = _is_rsi_reversion_signal_mode(signal_mode["signal_mode"])
     resolved_alpha = rolling_alpha
     if resolved_alpha is None:
         cached_alpha = market_features.get("rolling_alpha")
@@ -982,20 +916,10 @@ def build_trade_profile(
             resolved_alpha = float(cached_alpha)
 
     volume_ratio = float(market_features.get("volume_ratio_20d") or 1.0)
-    relative_strength = float(market_features.get("relative_strength_20d_vs_benchmark") or 0.0)
-    breakout = bool(market_features.get("breakout_20d"))
-    breakdown_valid = bool(signal_mode["signal_mode"] == "short_breakdown")
-    breakout_valid = bool(signal_mode["signal_mode"] in {"momentum", "short_breakdown"} and ((breakout and volume_ratio >= 1.2 and relative_strength >= 0.0) or breakdown_valid))
-    fake_breakout = bool(breakout and not breakout_valid)
 
     expected = estimate_expected_return(
         ticker,
-        {
-            **market_features,
-            "breakout_valid": breakout_valid,
-            "fake_breakout": fake_breakout,
-            "short_trend_confirmed": breakdown_valid,
-        },
+        market_features,
         news_features,
         regime_score,
         rolling_alpha=resolved_alpha,
@@ -1005,32 +929,28 @@ def build_trade_profile(
     trade_stats = estimate_trade_stats(
         expected["expected_return_5d"],
         volume_ratio,
-        breakout_valid,
-        fake_breakout,
+        False,
+        False,
         float(expected.get("uncertainty_score") or 0.0),
         days_to_earnings=earnings_event.get("days_to_earnings"),
         options_data=options_data,
-        short_trend_confirmed=breakdown_valid,
-        long_breakout_confirmed=bool(signal_mode["signal_mode"] == "momentum" and breakout_valid),
+        short_trend_confirmed=False,
+        long_breakout_confirmed=False,
+        stat_arb_confirmed=False,
+        rsi_reversion_confirmed=rsi_reversion_confirmed,
         market_features=market_features,
     )
-    if expected.get("volatility_gate_block"):
-        gate = {
-            "eligible": False,
-            "reason": str(expected.get("volatility_gate_reason") or "20日波动率偏高，暂不放行动能追涨"),
-        }
-    else:
-        gate = evaluate_trade_gate(
-            signal_mode["signal_mode"],
-            expected["expected_return_5d"],
-            trade_stats,
-            regime_score,
-        )
-    if expected.get("exhaustion_reversal"):
-        gate = {
-            "eligible": False,
-            "reason": str(expected.get("exhaustion_reason") or "过热反转风控触发"),
-        }
+    gate = evaluate_trade_gate(
+        signal_mode["signal_mode"],
+        expected["expected_return_5d"],
+        trade_stats,
+        regime_score,
+        signal_reason=str(signal_mode.get("signal_reason") or ""),
+    )
+
+    trade_direction = "FLAT"
+    if signal_mode["signal_mode"] == "rsi_reversion_long":
+        trade_direction = "LONG"
 
     inference_log = (
         f"{signal_mode['signal_label']} / {expected['inference_log']} / "
@@ -1041,10 +961,10 @@ def build_trade_profile(
         **signal_mode,
         **trade_stats,
         **earnings_event,
-        "trade_direction": "SHORT" if breakdown_valid else ("LONG" if signal_mode["signal_mode"] == "momentum" else "FLAT"),
-        "breakdown": breakdown_valid,
-        "breakout_valid": breakout_valid,
-        "fake_breakout": fake_breakout,
+        "trade_direction": trade_direction,
+        "breakdown": False,
+        "breakout_valid": False,
+        "fake_breakout": False,
         "eligible_for_risk": gate["eligible"],
         "gate_reason": gate["reason"],
         "inference_log": inference_log,
@@ -1058,7 +978,10 @@ def build_candidate_trade_profile(
     vix_value: float | None = None,
     options_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    exhaustion_signal = detect_exhaustion_reversal(candidate)
+    exhaustion_signal = {
+        "exhaustion_reversal": False,
+        "exhaustion_reason": "",
+    }
     earnings_event = get_upcoming_earnings(str(candidate.get("ticker") or ""))
     candidate_news = news_features or {}
     candidate_expected = estimate_expected_return(
@@ -1069,55 +992,34 @@ def build_candidate_trade_profile(
         vix_value=vix_value,
         options_data=options_data,
     )
-    if candidate.get("breakdown"):
-        signal_mode = {
-            "signal_mode": "short_breakdown",
-            "signal_label": "破位沽空",
-            "signal_reason": "放量跌破模板",
-        }
-    elif candidate.get("breakout_valid"):
-        signal_mode = {
-            "signal_mode": "momentum",
-            "signal_label": "动能延续",
-            "signal_reason": "放量突破模板",
-        }
-    else:
-        signal_mode = {
-            "signal_mode": "neutral",
-            "signal_label": "观望",
-            "signal_reason": "未触发突破阈值",
-        }
+    signal_mode = classify_signal_mode(candidate)
+    rsi_reversion_confirmed = _is_rsi_reversion_signal_mode(signal_mode["signal_mode"])
 
-    confirmed_setup = bool(candidate.get("breakout_valid") or candidate.get("breakdown"))
     trade_stats = estimate_trade_stats(
         float(candidate_expected.get("expected_return_5d") or 0.0),
         float(candidate.get("volume_ratio_20d") or 0.0),
-        confirmed_setup,
-        bool(candidate.get("fake_breakout")),
+        False,
+        False,
         float(candidate_expected.get("uncertainty_score") or 0.0),
         days_to_earnings=earnings_event.get("days_to_earnings"),
         options_data=options_data,
-        short_trend_confirmed=bool(candidate.get("breakdown") or str(candidate.get("trade_direction") or "").upper() == "SHORT"),
-        long_breakout_confirmed=bool(candidate.get("breakout_valid") and not candidate.get("breakdown")),
+        short_trend_confirmed=False,
+        long_breakout_confirmed=False,
+        stat_arb_confirmed=False,
+        rsi_reversion_confirmed=rsi_reversion_confirmed,
         market_features=candidate,
     )
-    if candidate_expected.get("volatility_gate_block"):
-        gate = {
-            "eligible": False,
-            "reason": str(candidate_expected.get("volatility_gate_reason") or "20日波动率偏高，暂不放行动能追涨"),
-        }
-    else:
-        gate = evaluate_trade_gate(
-            signal_mode["signal_mode"],
-            float(candidate_expected.get("expected_return_5d") or 0.0),
-            trade_stats,
-            regime_score,
-        )
-    if exhaustion_signal["exhaustion_reversal"] and str(candidate.get("trade_direction") or "LONG").upper() == "LONG":
-        gate = {
-            "eligible": False,
-            "reason": str(exhaustion_signal.get("exhaustion_reason") or "过热反转风控触发"),
-        }
+    gate = evaluate_trade_gate(
+        signal_mode["signal_mode"],
+        float(candidate_expected.get("expected_return_5d") or 0.0),
+        trade_stats,
+        regime_score,
+        signal_reason=str(signal_mode.get("signal_reason") or ""),
+    )
+
+    trade_direction = "FLAT"
+    if signal_mode["signal_mode"] == "rsi_reversion_long":
+        trade_direction = "LONG"
     return {
         **candidate,
         **candidate_expected,
@@ -1126,8 +1028,13 @@ def build_candidate_trade_profile(
         **earnings_event,
         **exhaustion_signal,
         "expected_return_10d": round(float(candidate_expected.get("expected_return_5d") or 0.0) * 1.6, 4),
-        "signal_strength": abs(float(candidate_expected.get("expected_return_5d") or 0.0)) * max(float(candidate.get("volume_ratio_20d") or 0.1), 0.1),
-        "trade_direction": "SHORT" if candidate.get("breakdown") else ("LONG" if candidate.get("breakout_valid") else "FLAT"),
+        "signal_strength": (
+            max(RSI_REVERSAL_BUY_THRESHOLD - float(candidate.get("rsi_14") or 50.0), 0.0)
+            * abs(float(candidate_expected.get("expected_return_5d") or 0.0))
+            if signal_mode["signal_mode"] == "rsi_reversion_long"
+            else 0.0
+        ),
+        "trade_direction": trade_direction,
         "eligible_for_risk": gate["eligible"],
         "gate_reason": gate["reason"],
     }
@@ -1138,15 +1045,12 @@ def should_force_observe(
     candidate_profiles: list[dict[str, Any]],
     regime_score: float,
 ) -> tuple[bool, str]:
-    if regime_score <= GLOBAL_OBSERVE_REGIME_THRESHOLD:
-        return True, "市场风险偏好过低"
-
+    del regime_score
     core_eligible = any(profile.get("eligible_for_risk") for profile in core_profiles.values())
     candidate_eligible = any(profile.get("eligible_for_risk") for profile in candidate_profiles)
-    if not core_eligible and not candidate_eligible:
-        return True, "未触发任何高胜率阈值"
-
-    return False, ""
+    if core_eligible or candidate_eligible:
+        return False, ""
+    return True, "未触发任何趋势过滤 RSI 低吸阈值"
 
 
 def estimate_trade_stats(
@@ -1159,6 +1063,8 @@ def estimate_trade_stats(
     options_data: dict[str, Any] | None = None,
     short_trend_confirmed: bool = False,
     long_breakout_confirmed: bool = False,
+    stat_arb_confirmed: bool = False,
+    rsi_reversion_confirmed: bool = False,
     market_features: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     edge_return_5d = abs(expected_return_5d)
@@ -1166,6 +1072,15 @@ def estimate_trade_stats(
     volume_divergence = _assess_volume_divergence(market_features or {}, long_breakout_confirmed or breakout_valid)
     if breakout_valid:
         win_rate += 0.12
+    if rsi_reversion_confirmed:
+        rsi_14 = _coerce_finite_float((market_features or {}).get("rsi_14"), 50.0)
+        oversold_gap = max(RSI_REVERSAL_BUY_THRESHOLD - rsi_14, 0.0)
+        win_rate += 0.10 + 0.08 * float(np.clip(oversold_gap / 15.0, 0.0, 1.0))
+    if stat_arb_confirmed:
+        idio_zscore = abs(float((market_features or {}).get("idio_zscore") or 0.0))
+        win_rate += 0.10 * float(np.clip(idio_zscore / 3.0, 0.0, 1.0))
+        if idio_zscore >= 1.0:
+            win_rate += 0.06 * float(np.clip((idio_zscore - 1.0) / 1.5, 0.0, 1.0))
     if fake_breakout:
         win_rate -= 0.15
     # Volume enters with a piecewise score: 1.2-2.5x confirms participation, while extreme volume above 3.0x
@@ -1189,8 +1104,22 @@ def estimate_trade_stats(
     win_rate = float(np.clip(win_rate, 0.2, 0.8))
 
     earnings_stop_buffer = 0.03 if earnings_event_block else (0.01 if days_to_earnings is not None and days_to_earnings <= 5 else 0.0)
-    stop_loss_pct = float(np.clip(0.03 + edge_return_5d * 0.6 + 0.02 * float(np.clip(uncertainty_score, 0.0, 1.0)) + earnings_stop_buffer, 0.03, 0.1))
-    reward_pct = float(max(edge_return_5d * (1.0 - 0.25 * float(np.clip(uncertainty_score, 0.0, 1.0))), 0.01))
+    uncertainty_term = float(np.clip(uncertainty_score, 0.0, 1.0))
+    if rsi_reversion_confirmed:
+        stop_loss_pct = float(np.clip(0.022 + edge_return_5d * 0.30 + 0.014 * uncertainty_term + earnings_stop_buffer, 0.022, 0.07))
+        reward_pct = float(max(edge_return_5d * (1.40 - 0.10 * uncertainty_term), 0.012))
+    elif stat_arb_confirmed:
+        stop_loss_pct = float(np.clip(0.022 + edge_return_5d * 0.28 + 0.016 * uncertainty_term + earnings_stop_buffer, 0.022, 0.075))
+        reward_pct = float(max(edge_return_5d * (1.35 - 0.10 * uncertainty_term), 0.012))
+    elif long_breakout_confirmed:
+        stop_loss_pct = float(np.clip(0.024 + edge_return_5d * 0.35 + 0.015 * uncertainty_term + earnings_stop_buffer, 0.025, 0.08))
+        reward_pct = float(max(edge_return_5d * (1.55 - 0.15 * uncertainty_term), 0.012))
+    elif breakout_valid or short_trend_confirmed:
+        stop_loss_pct = float(np.clip(0.028 + edge_return_5d * 0.45 + 0.018 * uncertainty_term + earnings_stop_buffer, 0.028, 0.09))
+        reward_pct = float(max(edge_return_5d * (1.30 - 0.20 * uncertainty_term), 0.011))
+    else:
+        stop_loss_pct = float(np.clip(0.03 + edge_return_5d * 0.6 + 0.02 * uncertainty_term + earnings_stop_buffer, 0.03, 0.1))
+        reward_pct = float(max(edge_return_5d * (1.0 - 0.25 * uncertainty_term), 0.01))
     payoff_ratio = reward_pct / stop_loss_pct if stop_loss_pct else 0.0
     ev = win_rate * reward_pct - (1.0 - win_rate) * stop_loss_pct
     return {

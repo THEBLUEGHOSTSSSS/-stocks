@@ -80,12 +80,15 @@ def continuous_kelly(
             edge_relief_factors[column] = 0.0
             continue
         resolved_asset_volatility[column] = resolved_volatility
-        base_scalar = float(np.clip(0.35 / resolved_volatility, 0.35, 1.0))
+        # V2.1: 风险收紧。旧公式是 clip(0.35 / sigma, 0.35, 1.0)，
+        # 会给高波动资产保留过高仓位。新公式改成 clip(0.20 / sigma, 0.10, 0.80)，
+        # 把 20 日波动率直接映射为更陡峭的惩罚曲线，让高 sigma 个股被机械压权。
+        base_scalar = float(np.clip(0.20 / resolved_volatility, 0.10, 0.80))
         expected_edge = max(float(expected_returns.get(column) or 0.0), 0.0)
         edge_relief = float(np.clip((expected_edge - 0.003) / 0.009, 0.0, 1.0))
-        high_volatility_intensity = float(np.clip((resolved_volatility - 0.35) / 0.55, 0.0, 1.0))
+        high_volatility_intensity = float(np.clip((resolved_volatility - 0.20) / 0.45, 0.0, 1.0))
         relief_multiplier = 1.0 + 0.65 * edge_relief * high_volatility_intensity
-        volatility_scalars[column] = float(np.clip(base_scalar * relief_multiplier, base_scalar, 0.9))
+        volatility_scalars[column] = float(np.clip(base_scalar * relief_multiplier, base_scalar, 0.80))
         edge_relief_factors[column] = edge_relief
 
     scaled_weights = scaled_weights * np.array([volatility_scalars.get(column, 1.0) for column in columns], dtype=float)

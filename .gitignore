@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.venv/
+
+# Local runtime state
+portfolio/account.json
+portfolio/holdings.json
+portfolio/holdings_history.json
+portfolio/custom_tickers.json
+
+# Generated outputs
+snapshots/

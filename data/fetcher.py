@@ -13,6 +13,7 @@ import requests
 import yfinance as yf
 
 from config import SHORT_MARGIN_CONFIG, TICKER_METADATA
+from data.sanity import PriceSanityError, enforce_history_sanity, enforce_quote_sanity
 
 
 _FETCH_WARNINGS: dict[str, str] = {}
@@ -266,7 +267,8 @@ def _fetch_eastmoney_history(
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
 
     normalized = _normalize_history_frame(frame)
-    return _tag_history_frame(normalized, ticker, "eastmoney.history")
+    validated = enforce_history_sanity(normalized, ticker, price_source="eastmoney.history")
+    return _tag_history_frame(validated, ticker, "eastmoney.history")
 
 
 def _fetch_eastmoney_realtime_quote(ticker: str) -> dict[str, Any]:
@@ -296,7 +298,7 @@ def _fetch_eastmoney_realtime_quote(ticker: str) -> dict[str, Any]:
         change_pct = ((current_price / previous_close) - 1.0) * 100.0
 
     fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return {
+    quote = {
         "ticker": str(data.get("f57") or ticker).upper(),
         "close": current_price,
         "reference_price": current_price,
@@ -305,6 +307,8 @@ def _fetch_eastmoney_realtime_quote(ticker: str) -> dict[str, Any]:
         "regular_close": previous_close,
         "pre_market_price": None,
         "post_market_price": None,
+        "night_session_price": None,
+        "extended_session_price": None,
         "market_state": None,
         "session_label": "未知",
         "session_change_pct": change_pct,
@@ -312,6 +316,7 @@ def _fetch_eastmoney_realtime_quote(ticker: str) -> dict[str, Any]:
         "as_of": fetched_at,
         "price_source": "eastmoney.realtime",
     }
+    return enforce_quote_sanity(quote, str(quote.get("ticker") or ticker), price_source="eastmoney.realtime")
 
 
 def get_history(
@@ -330,7 +335,8 @@ def get_history(
         )
         normalized = _normalize_history_frame(history)
         if not normalized.empty:
-            return _tag_history_frame(normalized, normalized_ticker, "yfinance.history")
+            validated = enforce_history_sanity(normalized, normalized_ticker, price_source="yfinance.history")
+            return _tag_history_frame(validated, normalized_ticker, "yfinance.history")
         primary_error = RuntimeError("海外源返回空数据")
     except Exception as exc:
         primary_error = exc
@@ -392,7 +398,12 @@ def batch_history(
                 frame = raw[ticker].copy()
                 normalized = _normalize_history_frame(frame)
                 if not normalized.empty:
-                    normalized = _tag_history_frame(normalized, ticker, "yfinance.history")
+                    try:
+                        normalized = enforce_history_sanity(normalized, ticker, price_source="yfinance.history")
+                        normalized = _tag_history_frame(normalized, ticker, "yfinance.history")
+                    except PriceSanityError as exc:
+                        register_fetch_warning("历史行情熔断", ticker, exc, provider="SanityGate")
+                        normalized = pd.DataFrame()
                 frames[ticker] = normalized
 
     for ticker in unique_tickers:
@@ -517,7 +528,7 @@ def _market_session_label(market_state: str | None) -> str:
     if normalized == "REGULAR":
         return "盘中"
     if normalized.startswith("POST"):
-        return "盘后"
+        return "夜盘"
     if normalized in {"CLOSED", "CLOSE"}:
         return "休市"
     return "未知"
@@ -553,6 +564,8 @@ def get_market_session_quote(ticker: str) -> dict[str, Any]:
     post_market_price = _safe_float(info.get("postMarketPrice"))
     market_state = str(info.get("marketState") or "").upper()
     session_label = _market_session_label(market_state)
+    night_session_price = post_market_price
+    extended_session_price = pre_market_price if pre_market_price is not None else night_session_price
     source_ticker = _normalize_ticker_key(
         info.get("symbol")
         or info.get("underlyingSymbol")
@@ -562,7 +575,7 @@ def get_market_session_quote(ticker: str) -> dict[str, Any]:
 
     if session_label == "盘前" and pre_market_price is not None:
         active_price = pre_market_price
-    elif session_label == "盘后" and post_market_price is not None:
+    elif session_label == "夜盘" and post_market_price is not None:
         active_price = post_market_price
     else:
         active_price = regular_market_price
@@ -597,7 +610,7 @@ def get_market_session_quote(ticker: str) -> dict[str, Any]:
             register_fetch_warning("实时快照", normalized_ticker, RuntimeError("海外源与东方财富均未返回可用快照"))
 
     fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return {
+    quote = {
         "ticker": source_ticker,
         "close": active_price,
         "reference_price": active_price,
@@ -606,6 +619,8 @@ def get_market_session_quote(ticker: str) -> dict[str, Any]:
         "regular_close": regular_previous_close,
         "pre_market_price": pre_market_price,
         "post_market_price": post_market_price,
+        "night_session_price": night_session_price,
+        "extended_session_price": extended_session_price,
         "market_state": market_state or None,
         "session_label": session_label,
         "session_change_pct": change_pct,
@@ -613,6 +628,21 @@ def get_market_session_quote(ticker: str) -> dict[str, Any]:
         "as_of": fetched_at,
         "price_source": price_source,
     }
+    try:
+        return enforce_quote_sanity(quote, source_ticker or normalized_ticker, price_source=price_source or "yfinance.info")
+    except PriceSanityError as exc:
+        register_fetch_warning("实时快照熔断", normalized_ticker, exc, provider="SanityGate")
+        return {
+            **quote,
+            "close": None,
+            "reference_price": None,
+            "regular_market_price": None,
+            "pre_market_price": None,
+            "post_market_price": None,
+            "night_session_price": None,
+            "extended_session_price": None,
+            "price_source": "unavailable",
+        }
 
 
 def get_latest_quote(ticker: str) -> dict[str, Any]:
@@ -815,7 +845,8 @@ def _published_sort_key(item: dict[str, Any]) -> tuple[int, str]:
     return (0, "")
 
 
-def get_news_items(ticker: str, limit: int = 10) -> list[dict[str, Any]]:
+@lru_cache(maxsize=512)
+def _get_news_items_cached(ticker: str, limit: int = 10) -> tuple[dict[str, Any], ...]:
     ticker_obj = yf.Ticker(ticker)
     raw_news: list[dict[str, Any]] = []
     try:
@@ -841,4 +872,9 @@ def get_news_items(ticker: str, limit: int = 10) -> list[dict[str, Any]]:
         deduped.append(item)
         if len(deduped) >= limit:
             break
-    return deduped
+    return tuple(deduped)
+
+
+def get_news_items(ticker: str, limit: int = 10) -> list[dict[str, Any]]:
+    normalized_ticker = _normalize_ticker_key(ticker)
+    return [dict(item) for item in _get_news_items_cached(normalized_ticker, int(limit))]

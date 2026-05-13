@@ -8,16 +8,19 @@ import numpy as np
 import pandas as pd
 
 from data.fetcher import batch_history
-from data.indicators import (
-    compute_historical_volatility,
-    compute_log_return,
-    compute_relative_strength,
-    compute_rsi,
-    compute_volume_ratio,
-)
+from data.indicators import compute_historical_volatility, compute_rsi
 
 
 SearchMethod = Literal["grid", "random"]
+
+
+RSI_REVERSAL_BUY_THRESHOLD = 35.0
+RSI_REVERSAL_SELL_THRESHOLD = 70.0
+RSI_TREND_FILTER_LOOKBACK = 120
+RSI_KELLY_VOL_TARGET = 0.20
+RSI_KELLY_VOL_FLOOR = 0.10
+RSI_KELLY_VOL_CAP = 0.80
+RSI_MINIMALIST_FACTOR_SET = "rsi_minimalist_reversion"
 
 
 @dataclass(frozen=True)
@@ -125,6 +128,9 @@ class WalkForwardValidator:
         self.fold_step = int(max(fold_step if fold_step is not None else self.test_window, 1))
         self.panel_data = self._prepare_panel(panel_data)
 
+    def _is_rsi_minimalist_mode(self) -> bool:
+        return tuple(self.factor_cols) == ("rsi_14", "hist_vol_20d")
+
     def run(self) -> WalkForwardResult:
         folds = list(self.iter_folds())
         if not folds:
@@ -215,7 +221,14 @@ class WalkForwardValidator:
         if missing_cols:
             raise KeyError(f"missing_required_columns: {missing_cols}")
 
-        frame = panel_data.loc[:, list(required_cols)].copy()
+        columns_to_keep = list(required_cols)
+        if self._is_rsi_minimalist_mode():
+            columns_to_keep.extend(
+                column
+                for column in ("signal_mode", "rsi_trigger")
+                if column in panel_data.columns
+            )
+        frame = panel_data.loc[:, list(dict.fromkeys(columns_to_keep))].copy()
         frame[self.date_col] = pd.to_datetime(frame[self.date_col], errors="coerce")
         frame = frame.dropna(subset=[self.date_col, self.asset_col, self.target_col])
         if frame.empty:
@@ -249,6 +262,19 @@ class WalkForwardValidator:
         return resolved
 
     def _fit_preprocessor(self, train_frame: pd.DataFrame) -> PreprocessingStats:
+        if self._is_rsi_minimalist_mode():
+            features = train_frame.loc[:, self.factor_cols].copy().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+            medians = features.median(numeric_only=True)
+            means = features.mean()
+            stds = pd.Series(1.0, index=features.columns, dtype=float)
+            return PreprocessingStats(
+                medians=medians,
+                lower_bounds=features.min(),
+                upper_bounds=features.max(),
+                means=means,
+                stds=stds,
+            )
+
         features = train_frame.loc[:, self.factor_cols].copy()
         medians = features.median(numeric_only=True)
         filled = features.fillna(medians)
@@ -267,6 +293,14 @@ class WalkForwardValidator:
         )
 
     def _transform(self, frame: pd.DataFrame, stats: PreprocessingStats) -> pd.DataFrame:
+        if self._is_rsi_minimalist_mode():
+            transformed = frame.copy()
+            for column in self.factor_cols:
+                transformed[column] = pd.to_numeric(transformed[column], errors="coerce")
+            transformed["rsi_14"] = transformed["rsi_14"].replace([np.inf, -np.inf], np.nan).fillna(50.0)
+            transformed["hist_vol_20d"] = transformed["hist_vol_20d"].replace([np.inf, -np.inf], np.nan)
+            return transformed
+
         transformed = frame.copy()
         features = transformed.loc[:, self.factor_cols].copy()
         features = features.fillna(stats.medians)
@@ -281,6 +315,14 @@ class WalkForwardValidator:
         train_frame: pd.DataFrame,
         fold_id: int,
     ) -> tuple[dict[str, float], dict[str, float]]:
+        if self._is_rsi_minimalist_mode():
+            fixed_weights = {
+                "rsi_14": 1.0,
+                "hist_vol_20d": 0.0,
+            }
+            simulation = self._simulate_portfolio(train_frame, fixed_weights, fold_id, "train")
+            return fixed_weights, simulation["metrics"]
+
         best_weights: dict[str, float] | None = None
         best_metrics: dict[str, float] | None = None
         best_objective = -np.inf
@@ -345,6 +387,9 @@ class WalkForwardValidator:
         fold_id: int,
         split_label: str,
     ) -> dict[str, Any]:
+        if self._is_rsi_minimalist_mode():
+            return self._simulate_rsi_reversion_portfolio(frame, fold_id, split_label)
+
         scores = self._compute_scores(frame, weights)
         predictions = frame.loc[:, [self.date_col, self.asset_col, self.target_col]].copy()
         predictions["fold_id"] = fold_id
@@ -366,6 +411,74 @@ class WalkForwardValidator:
             "daily_returns": net_return,
             "metrics": self._compute_metrics(net_return),
         }
+
+    def _simulate_rsi_reversion_portfolio(
+        self,
+        frame: pd.DataFrame,
+        fold_id: int,
+        split_label: str,
+    ) -> dict[str, Any]:
+        predictions = frame.loc[
+            :,
+            [
+                self.date_col,
+                self.asset_col,
+                self.target_col,
+                "close",
+                "rsi_14",
+                "hist_vol_20d",
+                "sma_120",
+                "close_above_sma_120",
+            ],
+        ].copy()
+        predictions["fold_id"] = fold_id
+        predictions["split"] = split_label
+        oversold_gap = np.clip(RSI_REVERSAL_BUY_THRESHOLD - predictions["rsi_14"], 0.0, None)
+        trend_filter_pass = predictions["close_above_sma_120"].fillna(False).astype(bool)
+        eligible_long = (predictions["rsi_14"] < RSI_REVERSAL_BUY_THRESHOLD) & trend_filter_pass
+        predictions["signal_score"] = np.where(eligible_long, oversold_gap, 0.0)
+        predictions["signal_mode"] = np.where(
+            predictions["rsi_14"] >= RSI_REVERSAL_SELL_THRESHOLD,
+            "liquidate",
+            np.where(eligible_long, "rsi_reversion_long", "neutral"),
+        )
+        predictions["rsi_trigger"] = eligible_long
+        predictions["trend_filter_pass"] = trend_filter_pass
+        predictions["knife_catch_block"] = (predictions["rsi_14"] < RSI_REVERSAL_BUY_THRESHOLD) & (~trend_filter_pass)
+
+        resolved_hist_vol = pd.to_numeric(predictions["hist_vol_20d"], errors="coerce")
+        resolved_hist_vol = resolved_hist_vol.replace([np.inf, -np.inf], np.nan)
+        predictions["volatility_scalar"] = np.where(
+            resolved_hist_vol > 0.0,
+            np.clip(RSI_KELLY_VOL_TARGET / resolved_hist_vol, RSI_KELLY_VOL_FLOOR, RSI_KELLY_VOL_CAP),
+            RSI_KELLY_VOL_FLOOR,
+        )
+        predictions["raw_position"] = np.where(eligible_long, predictions["volatility_scalar"], 0.0)
+        predictions["position"] = predictions.groupby(self.date_col, group_keys=False)["raw_position"].apply(
+            self._normalize_rsi_positions
+        )
+
+        position_matrix = predictions.pivot(index=self.date_col, columns=self.asset_col, values="position").fillna(0.0)
+        return_matrix = predictions.pivot(index=self.date_col, columns=self.asset_col, values=self.target_col).fillna(0.0)
+        gross_return = (position_matrix * return_matrix).sum(axis=1)
+        turnover = position_matrix.diff().abs().sum(axis=1)
+        if not turnover.empty:
+            turnover.iloc[0] = position_matrix.iloc[0].abs().sum()
+        cost = turnover * (self.transaction_cost_bps / 10000.0)
+        net_return = (gross_return - cost).rename("portfolio_return")
+
+        return {
+            "predictions": predictions,
+            "daily_returns": net_return,
+            "metrics": self._compute_metrics(net_return),
+        }
+
+    def _normalize_rsi_positions(self, raw_position: pd.Series) -> pd.Series:
+        cleaned = raw_position.replace([np.inf, -np.inf], np.nan).fillna(0.0).astype(float)
+        gross = float(cleaned.abs().sum())
+        if gross <= 1e-12 or gross <= 1.0:
+            return cleaned
+        return (cleaned / gross).astype(float)
 
     def _compute_scores(self, frame: pd.DataFrame, weights: dict[str, float]) -> pd.Series:
         weight_vector = np.asarray([weights[factor] for factor in self.factor_cols], dtype=float)
@@ -446,71 +559,65 @@ def build_project_panel_data(
     target_horizon: int = 1,
     min_rows_per_asset: int = 80,
 ) -> pd.DataFrame:
-    benchmark_history = histories.get(benchmark_ticker, pd.DataFrame())
-    benchmark_close = benchmark_history.get("close") if not benchmark_history.empty else None
+    del benchmark_ticker
     panel_frames: list[pd.DataFrame] = []
+    empty_columns = [
+        "date",
+        "asset",
+        "close",
+        "rsi_14",
+        "hist_vol_20d",
+        "sma_120",
+        "close_above_sma_120",
+        "signal_mode",
+        "rsi_trigger",
+        "knife_catch_block",
+        "forward_return_1d",
+    ]
 
     for ticker, history in histories.items():
         if history is None or history.empty:
             continue
 
         frame = history.copy().sort_index()
-        if "close" not in frame or "volume" not in frame:
+        if "close" not in frame:
             continue
 
         close = pd.to_numeric(frame["close"], errors="coerce")
-        volume = pd.to_numeric(frame["volume"], errors="coerce")
         hist_vol_20d = compute_historical_volatility(close, window=20)
-        hist_vol_60d = compute_historical_volatility(close, window=60)
-        log_return_10d = compute_log_return(close, periods=10)
-        log_return_60d = compute_log_return(close, periods=60)
+        rsi_14 = compute_rsi(close, window=14)
+        sma_120 = close.rolling(window=RSI_TREND_FILTER_LOOKBACK, min_periods=RSI_TREND_FILTER_LOOKBACK).mean()
+        close_above_sma_120 = close > sma_120
         factor_frame = pd.DataFrame(index=frame.index)
         factor_frame["asset"] = ticker
-        factor_frame["log_return_10d"] = log_return_10d
-        factor_frame["log_return_60d"] = log_return_60d
+        factor_frame["close"] = close
+        factor_frame["rsi_14"] = rsi_14
         factor_frame["hist_vol_20d"] = hist_vol_20d
-        factor_frame["hist_vol_60d"] = hist_vol_60d
-        factor_frame["volume_ratio_20d"] = compute_volume_ratio(volume, window=20)
-        factor_frame["rsi_14"] = compute_rsi(close, window=14)
+        factor_frame["sma_120"] = sma_120
+        factor_frame["close_above_sma_120"] = close_above_sma_120.fillna(False)
         factor_frame["forward_return_1d"] = close.pct_change(target_horizon).shift(-target_horizon)
-        factor_frame["daily_return_pct"] = close.pct_change() * 100.0
-        factor_frame["breakout_20d"] = (
-            close > close.shift(1).rolling(window=20, min_periods=20).max()
-        ).astype(float)
-
-        if benchmark_close is not None and ticker != benchmark_ticker:
-            factor_frame["relative_strength_20d_vs_benchmark"] = compute_relative_strength(
-                close,
-                benchmark_close,
-                window=20,
-            )
-        else:
-            factor_frame["relative_strength_20d_vs_benchmark"] = 0.0
-
         factor_frame = factor_frame.reset_index(names="date")
         factor_frame = factor_frame.replace([np.inf, -np.inf], np.nan)
-        factor_frame = factor_frame.dropna(subset=["forward_return_1d"])
-        if len(factor_frame) < min_rows_per_asset:
-            continue
-        panel_frames.append(factor_frame)
+        factor_frame["signal_mode"] = np.where(
+            factor_frame["rsi_14"] >= RSI_REVERSAL_SELL_THRESHOLD,
+            "liquidate",
+            np.where(
+                (factor_frame["rsi_14"] < RSI_REVERSAL_BUY_THRESHOLD) & factor_frame["close_above_sma_120"],
+                "rsi_reversion_long",
+                "neutral",
+            ),
+        )
+        factor_frame["rsi_trigger"] = factor_frame["signal_mode"] == "rsi_reversion_long"
+        factor_frame["knife_catch_block"] = (
+            (factor_frame["rsi_14"] < RSI_REVERSAL_BUY_THRESHOLD)
+            & (~factor_frame["close_above_sma_120"].fillna(False))
+        )
+        factor_frame = factor_frame.dropna(subset=["forward_return_1d", "hist_vol_20d", "sma_120"])
+        if len(factor_frame) >= min_rows_per_asset:
+            panel_frames.append(factor_frame)
 
     if not panel_frames:
-        return pd.DataFrame(
-            columns=[
-                "date",
-                "asset",
-                "log_return_10d",
-                "log_return_60d",
-                "hist_vol_20d",
-                "hist_vol_60d",
-                "volume_ratio_20d",
-                "rsi_14",
-                "relative_strength_20d_vs_benchmark",
-                "daily_return_pct",
-                "breakout_20d",
-                "forward_return_1d",
-            ]
-        )
+        return pd.DataFrame(columns=empty_columns)
 
     panel = pd.concat(panel_frames, ignore_index=True)
     return panel.sort_values(["date", "asset"]).reset_index(drop=True)
